@@ -1,0 +1,9 @@
+-cp src
+-main BeapTool
+-neko beap.n
+
+--next
+
+-cp src
+-main Run
+-neko run.n
