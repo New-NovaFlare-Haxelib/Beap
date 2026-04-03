@@ -3,12 +3,26 @@ import StringTools;
 import sys.FileSystem;
 import haxe.io.Path;
 
+// 控制台颜色代码
+enum ConsoleColor {
+    RESET;
+    RED;
+    GREEN;
+    YELLOW;
+    BLUE;
+    MAGENTA;
+    CYAN;
+    WHITE;
+    BOLD;
+}
+
 class BeapTool {
     static var projectName:String = "MyGame";
     static var beapPath:String = "";
     static var projectDir:String = "";
     static var _isTestMode:Bool = false;
-    static var runningProcess:Process = null;  // 用于跟踪运行中的进程
+    static var runningProcess:Process = null;
+    static var supportsColor:Bool = true;
     
     public static function main() {
         projectDir = Sys.getCwd();
@@ -25,6 +39,7 @@ class BeapTool {
         
         Sys.setCwd(projectDir);
         
+        checkColorSupport();
         setConsoleUTF8IfNeeded();
         Lang.init();
         getBeapPath();
@@ -51,7 +66,7 @@ class BeapTool {
                 
             case "test":
                 if (target == "") {
-                    Sys.println("Usage: beap test <target>");
+                    println("Usage: beap test <target>", RED);
                 } else {
                     loadConfig();
                     stopRunningGame();
@@ -63,24 +78,24 @@ class BeapTool {
             case "lang":
                 if (target == "en") {
                     Lang.setLang("en");
-                    Sys.println(Lang.get("lang_switched"));
+                    println(Lang.get("lang_switched"), GREEN);
                 } else if (target == "zh") {
                     Lang.setLang("zh");
                     Sys.command("chcp 65001 > nul");
-                    Sys.println(Lang.get("lang_switched"));
+                    println(Lang.get("lang_switched"), GREEN);
                 } else if (target == "") {
                     var current = Lang.getLang();
                     if (current == "en") {
-                        Sys.println("Current language: English");
+                        println("Current language: English", CYAN);
                     } else {
-                        Sys.println("当前语言: 中文");
+                        println("当前语言: 中文", CYAN);
                     }
-                    Sys.println("");
-                    Sys.println("Usage: beap lang [en/zh]");
-                    Sys.println("  en  - Switch to English");
-                    Sys.println("  zh  - Switch to Chinese");
+                    println("");
+                    println("Usage: beap lang [en/zh]", YELLOW);
+                    println("  en  - Switch to English", WHITE);
+                    println("  zh  - Switch to Chinese", WHITE);
                 } else {
-                    Sys.println(Lang.get("unknown_lang", [target]));
+                    println(Lang.get("unknown_lang", [target]), RED);
                 }
                 
             case "stop":
@@ -90,19 +105,70 @@ class BeapTool {
                 printHelp();
                 
             default:
-                Sys.println(Lang.get("unknown_cmd", [command]));
+                println(Lang.get("unknown_cmd", [command]), RED);
                 printHelp();
         }
     }
-    
-    static function stopRunningGame() {
-        var result = Sys.command('taskkill /f /im "$projectName.exe" 2>nul');
-        if (result == 0) {
-            Sys.println("Stopped previous game process.");
-        }
-        Sys.sleep(0.5);
+
+    // 检查是否支持颜色
+    static function checkColorSupport() {
+        #if windows
+        // Windows 10+ 支持 ANSI 颜色
+        var version = Sys.command('ver');
+        supportsColor = true;
+        #else
+        // Linux/Mac 通常支持
+        supportsColor = true;
+        #end
     }
 
+    // 获取颜色代码
+    static function getColorCode(color:ConsoleColor):String {
+        if (!supportsColor) return "";
+        
+        return switch (color) {
+            case RESET: "\x1b[0m";
+            case RED: "\x1b[31m";
+            case GREEN: "\x1b[32m";
+            case YELLOW: "\x1b[33m";
+            case BLUE: "\x1b[34m";
+            case MAGENTA: "\x1b[35m";
+            case CYAN: "\x1b[36m";
+            case WHITE: "\x1b[37m";
+            case BOLD: "\x1b[1m";
+        }
+    }
+    
+    // 带颜色的打印
+    static function println(text:String, color:ConsoleColor = WHITE) {
+        Sys.println(getColorCode(color) + text + getColorCode(RESET));
+    }
+    
+    // 不带换行的打印
+    static function print(text:String, color:ConsoleColor = WHITE) {
+        Sys.print(getColorCode(color) + text + getColorCode(RESET));
+    }
+    
+    // 成功消息
+    static function printSuccess(text:String) {
+        println("[✓] " + text, GREEN);
+    }
+    
+    // 错误消息
+    static function printError(text:String) {
+        println("[✗] " + text, RED);
+    }
+    
+    // 警告消息
+    static function printWarning(text:String) {
+        println("[!] " + text, YELLOW);
+    }
+    
+    // 信息消息
+    static function printInfo(text:String) {
+        println("[i] " + text, CYAN);
+    }
+    
     static function setConsoleUTF8IfNeeded() {
         var currentCodePage = getCurrentCodePage();
         if (currentCodePage != 65001) {
@@ -144,23 +210,23 @@ class BeapTool {
     }
     
     static function printBuildHelp() {
-        Sys.println(Lang.get("need_target"));
-        Sys.println("");
-        Sys.println(Lang.get("targets"));
-        Sys.println(Lang.get("target_hl"));
-        Sys.println(Lang.get("target_windows"));
+        println(Lang.get("need_target"), YELLOW);
+        println("");
+        println(Lang.get("targets"), BOLD);
+        println("  " + Lang.get("target_hl"), GREEN);
+        println("  " + Lang.get("target_windows"), GREEN);
     }
     
     static function checkEnvironment():Bool {
-        Sys.println(Lang.get("checking_env"));
+        printInfo(Lang.get("checking_env"));
         
         var haxeOk = Sys.command("haxe -version > nul 2>&1") == 0;
         if (!haxeOk) {
-            Sys.println(Lang.get("haxe_not_found"));
+            printError(Lang.get("haxe_not_found"));
             return false;
         }
         
-        Sys.println(Lang.get("env_ok"));
+        printSuccess(Lang.get("env_ok"));
         return true;
     }
     
@@ -177,11 +243,11 @@ class BeapTool {
         Sys.setCwd(projectDir);
         
         if (!FileSystem.exists("src/Main.hx")) {
-            Sys.println("Error: src/Main.hx not found!");
-            Sys.println("Project directory: " + projectDir);
-            Sys.println("");
-            Sys.println("Please make sure you are in your Heaps project directory.");
-            Sys.println("Or run 'beap init' to create a new project.");
+            printError("src/Main.hx not found!");
+            println("Project directory: " + projectDir, CYAN);
+            println("");
+            println("Please make sure you are in your Heaps project directory.", YELLOW);
+            println("Or run 'beap init' to create a new project.", YELLOW);
             Sys.exit(1);
         }
         
@@ -193,10 +259,10 @@ class BeapTool {
             case "windows":
                 buildWindows();
             case "linux", "mac", "android", "ios", "html5":
-                Sys.println(Lang.get("build_" + target));
-                Sys.println("Coming soon...");
+                printInfo(Lang.get("build_" + target));
+                println("Coming soon...", YELLOW);
             default:
-                Sys.println(Lang.get("unknown_target", [target]));
+                printError(Lang.get("unknown_target", [target]));
         }
     }
     
@@ -209,70 +275,64 @@ class BeapTool {
             case "windows":
                 runWindows();
             default:
-                Sys.println(Lang.get("unknown_target", [target]));
+                printError(Lang.get("unknown_target", [target]));
         }
     }
     
-    // 获取用户自定义的 hxml 内容，如果没有则使用默认
     static function getBuildHxml():String {
         var userHxmlPath = "build.hxml";
         
-        // 优先使用用户自己的 build.hxml
         if (FileSystem.exists(userHxmlPath)) {
-            Sys.println("Using user's build.hxml");
+            printInfo("Using user's build.hxml");
             try {
                 return sys.io.File.getContent(userHxmlPath);
             } catch (e:Dynamic) {
-                Sys.println("Warning: Failed to read build.hxml, using default.");
+                printWarning("Failed to read build.hxml, using default.");
             }
         }
         
-        // 使用默认配置
-        Sys.println("Using default build configuration");
+        printInfo("Using default build configuration");
         return '
 -cp src
 -main Main
 -lib heaps
 -lib format
 -lib hldx
--D windowTitle="$projectName"
+-D windowTitle=$projectName
 -D windowSize=1280x720
 -D debug
 -hl build/$projectName.hl
 ';
     }
     
-    // 获取用户自定义的 Windows hxml 内容，如果没有则使用默认
     static function getWindowsBuildHxml():String {
         var userHxmlPath = "build-windows.hxml";
         
-        // 优先使用用户自己的 build-windows.hxml
         if (FileSystem.exists(userHxmlPath)) {
-            Sys.println("Using user's build-windows.hxml");
+            printInfo(Lang.get("using_user_config"));
             try {
                 return sys.io.File.getContent(userHxmlPath);
             } catch (e:Dynamic) {
-                Sys.println("Warning: Failed to read build-windows.hxml, using default.");
+                printWarning(Lang.get("config_read_error"));
             }
         }
         
-        // 使用默认配置
-        Sys.println("Using default Windows build configuration");
+        printInfo(Lang.get("using_default_config"));
         return '
 -cp src
 -main Main
 -lib heaps
 -lib format
 -lib hldx
--D windowTitle="$projectName"
+-D windowTitle=$projectName
 -D windowSize=1280x720
 -D windowResizable
 -hl out/$projectName.c
-';
+    ';
     }
     
     static function buildHashLink() {
-        Sys.println(Lang.get("build_hl"));
+        println(Lang.get("build_hl"), BOLD);
         
         createDir("build");
         loadConfig();
@@ -280,26 +340,26 @@ class BeapTool {
         var hxmlContent = getBuildHxml();
         sys.io.File.saveContent("build.hxml", hxmlContent);
         
-        Sys.println(Lang.get("compile_hl"));
+        printInfo(Lang.get("compile_hl"));
         var exitCode = Sys.command("haxe", ["build.hxml"]);
         
         if (exitCode != 0) {
-            Sys.println(Lang.get("build_failed"));
+            printError(Lang.get("build_failed"));
             Sys.exit(1);
         }
         
-        Sys.println(Lang.get("build_success", ["build/" + projectName + ".hl"]));
+        printSuccess(Lang.get("build_success", ["build/" + projectName + ".hl"]));
     }
     
     static function runHashLink() {
         var hlFile = 'build/$projectName.hl';
         
         if (!FileSystem.exists(hlFile)) {
-            Sys.println(Lang.get("hl_file_not_found"));
+            printError(Lang.get("hl_file_not_found"));
             return;
         }
         
-        Sys.println(Lang.get("running", [projectName]));
+        printSuccess(Lang.get("running", [projectName]));
         #if windows
         Sys.command('start "" hl "$hlFile"');
         #else
@@ -308,7 +368,7 @@ class BeapTool {
     }
     
     static function buildWindows() {
-        Sys.println(Lang.get("build_windows"));
+        println(Lang.get("build_windows"), BOLD);
         
         createDir("build");
         createDir("out");
@@ -317,32 +377,31 @@ class BeapTool {
         var hxmlContent = getWindowsBuildHxml();
         sys.io.File.saveContent("build-windows.hxml", hxmlContent);
         
-        Sys.println(Lang.get("compile_haxe"));
+        printInfo(Lang.get("compile_haxe"));
         var exitCode = Sys.command("haxe", ["build-windows.hxml"]);
         if (exitCode != 0) {
-            Sys.println(Lang.get("build_failed"));
+            printError(Lang.get("build_failed"));
             Sys.exit(1);
         }
         
         var vsInfo = findVisualStudio();
         if (vsInfo == null) {
-            Sys.println("Error: Visual Studio not found!");
+            printError("Visual Studio not found!");
             return;
         }
         
-        Sys.println("Found: " + vsInfo.name);
+        printSuccess("Found: " + vsInfo.name);
         
         var hlDir = getHashLinkDir();
         if (hlDir == "") {
-            Sys.println(Lang.get("hl_not_found"));
+            printError(Lang.get("hl_not_found"));
             return;
         }
         
-        Sys.println("Compiling to EXE...");
+        printInfo("Compiling to EXE...");
         var compileCmd = buildCompileCommand(vsInfo, hlDir, _isTestMode);
         executeWithVCVars(vsInfo, compileCmd);
         
-        // 移动生成的文件到 build 目录
         var rootExe = '$projectName.exe';
         var rootObj = '$projectName.obj';
         var buildExe = 'build/$projectName.exe';
@@ -353,15 +412,14 @@ class BeapTool {
                 FileSystem.deleteFile(buildExe);
             }
             FileSystem.rename(rootExe, buildExe);
-            Sys.println(Lang.get("build_success", [buildExe]));
+            printSuccess(Lang.get("build_success", [buildExe]));
         } else if (FileSystem.exists(buildExe)) {
-            Sys.println(Lang.get("build_success", [buildExe]));
+            printSuccess(Lang.get("build_success", [buildExe]));
         } else {
-            Sys.println("Build failed! No EXE generated.");
+            printError("Build failed! No EXE generated.");
             return;
         }
         
-        // 移动 .obj 文件（可选）
         if (FileSystem.exists(rootObj)) {
             if (FileSystem.exists(buildObj)) {
                 FileSystem.deleteFile(buildObj);
@@ -373,14 +431,13 @@ class BeapTool {
     static function runWindows() {
         var exePath = 'build/' + projectName + '.exe';
         if (FileSystem.exists(exePath)) {
-            Sys.println(Lang.get("running", [projectName]));
+            printSuccess(Lang.get("running", [projectName]));
             Sys.command('start "" "' + exePath + '"');
         } else {
-            Sys.println(Lang.get("exe_not_found"));
+            printError(Lang.get("exe_not_found"));
         }
     }
     
-    // ========== Visual Studio 检测（模仿 Lime）==========
     static function findVisualStudio():{name:String, vcvars:String, version:Int} {
         var vswherePaths = [
             "C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe",
@@ -425,7 +482,6 @@ class BeapTool {
         var exeFile = 'build/' + projectName + '.exe';
         
         var currentDir = StringTools.replace(Sys.getCwd(), "\\", "/");
-
         if (StringTools.endsWith(currentDir, "/")) {
             currentDir = currentDir.substr(0, currentDir.length - 1);
         }
@@ -456,20 +512,17 @@ class BeapTool {
             if (FileSystem.exists(fullPath)) {
                 libArgs += ' "' + fullPath + '"';
             } else {
-                Sys.println("  Warning: " + lib + " not found at " + fullPath);
+                printWarning(lib + " not found at " + fullPath);
             }
         }
         
-        // 根据 forTest 选择子系统
         var subsystem = forTest ? "/SUBSYSTEM:CONSOLE" : "/SUBSYSTEM:WINDOWS";
-        
         var cmd = 'cl "' + cFile + '"' + includeArgs + ' /link' + libArgs + ' user32.lib opengl32.lib gdi32.lib shell32.lib d3d11.lib dxgi.lib d3dcompiler.lib ' + subsystem + ' /Fe:"' + exeFile + '" /nologo';
         
         return cmd;
     }
     
     static function executeWithVCVars(vsInfo:{name:String, vcvars:String, version:Int}, command:String) {
-        // 创建临时批处理文件
         var batchContent = '@echo off\n';
         batchContent += 'call "' + vsInfo.vcvars + '" > nul\n';
         batchContent += command + '\n';
@@ -478,7 +531,7 @@ class BeapTool {
         var batchFile = Sys.getCwd() + "/__build_temp.bat";
         sys.io.File.saveContent(batchFile, batchContent);
         
-        Sys.println("Running: " + command);
+        println("Running: " + command, CYAN);
         var exitCode = Sys.command('cmd', ['/c', batchFile]);
         
         try {
@@ -486,7 +539,7 @@ class BeapTool {
         } catch (e:Dynamic) {}
         
         if (exitCode != 0) {
-            Sys.println("Compilation failed with code: " + exitCode);
+            printError("Compilation failed with code: " + exitCode);
             Sys.exit(exitCode);
         }
     }
@@ -498,7 +551,7 @@ class BeapTool {
                 var process = new Process("where", ["hl"]);
                 var hlPath = StringTools.trim(process.stdout.readAll().toString());
                 process.close();
-                Sys.println("hl found at: " + hlPath);
+                printInfo("hl found at: " + hlPath);
                 return Path.directory(hlPath);
             } catch (e:Dynamic) {}
         }
@@ -512,7 +565,7 @@ class BeapTool {
         
         for (p in commonPaths) {
             if (p != null && FileSystem.exists(p) && FileSystem.exists(p + "\\hl.exe")) {
-                Sys.println("HashLink found at: " + p);
+                printInfo("HashLink found at: " + p);
                 return p;
             }
         }
@@ -541,31 +594,39 @@ class BeapTool {
         }
     }
     
-    static function printHelp() {
-        Sys.println("");
-        Sys.println("beap - Heaps Build Tool");
-        Sys.println("");
-        Sys.println("Usage: beap <command> [target]");
-        Sys.println("");
-        Sys.println("Commands:");
-        Sys.println("  build <target>    Build for specific platform");
-        Sys.println("  test <target>     Build and run for specific platform");
-        Sys.println("  stop              Stop running game");
-        Sys.println("  lang [en/zh]      Set language for beap");
-        Sys.println("  help              Show this help");
-        Sys.println("");
-        Sys.println(Lang.get("targets"));
-        Sys.println(Lang.get("target_hl"));
-        Sys.println(Lang.get("target_windows"));
-        Sys.println(Lang.get("target_linux"));
-        Sys.println(Lang.get("target_mac"));
-        Sys.println(Lang.get("target_android"));
-        Sys.println(Lang.get("target_ios"));
-        Sys.println(Lang.get("target_html5"));
-        Sys.println("");
-        Sys.println(Lang.get("examples"));
-        Sys.println(Lang.get("ex_build_hl"));
-        Sys.println(Lang.get("ex_build_windows"));
-        Sys.println("");
+static function printHelp() {
+    println("");
+    println("beap - Heaps Build Tool", BOLD);
+    println("");
+    
+    println(Lang.get("commands"), YELLOW);
+    println("  " + Lang.get("cmd_build"), GREEN);
+    println("  " + Lang.get("cmd_test"), GREEN);
+    println("  " + Lang.get("cmd_stop"), GREEN);
+    println("  " + Lang.get("cmd_lang"), GREEN);
+    println("  " + Lang.get("cmd_help"), GREEN);
+    println("");
+    
+    println(Lang.get("targets"), YELLOW);
+    println("  " + Lang.get("target_hl"), WHITE);
+    println("  " + Lang.get("target_windows"), WHITE);
+    println("  " + Lang.get("target_linux"), WHITE);
+    println("  " + Lang.get("target_mac"), WHITE);
+    println("  " + Lang.get("target_android"), WHITE);
+    println("  " + Lang.get("target_ios"), WHITE);
+    println("  " + Lang.get("target_html5"), WHITE);
+    println("");
+    
+    println(Lang.get("examples"), YELLOW);
+    println("  " + Lang.get("ex_build_hl"), CYAN);
+    println("  " + Lang.get("ex_build_windows"), CYAN);
+    println("");
+}
+
+    static function stopRunningGame() {
+        var result = Sys.command('taskkill /f /im "$projectName.exe" 2>nul');
+        if (result == 0) {
+            printSuccess(Lang.get("stop_success"));
+        }
     }
 }
