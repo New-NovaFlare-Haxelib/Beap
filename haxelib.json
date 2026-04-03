@@ -1,0 +1,18 @@
+{
+    "name": "beap",
+    "version": "1.0.0",
+    "releasenote": "Heaps build tool - cross-platform command line tool",
+    "description": "A command-line build tool for Heaps framework, similar to Lime",
+    "license": "MIT",
+    "tags": ["heaps", "build", "tool", "game", "cross-platform", "cli"],
+    "classPath": "",
+    "contributors": ["yourname"],
+    "dependencies": {},
+    "bin": {
+        "beap": {
+            "windows": "beap.bat",
+            "linux": "beap",
+            "mac": "beap"
+        }
+    }
+}
