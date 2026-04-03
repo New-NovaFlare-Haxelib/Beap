@@ -2,31 +2,55 @@ package beap;
 
 import sys.FileSystem;
 import sys.io.File;
+import beap.utils.PlatformUtils;
 
 class Config {
     public var projectName:String = "MyGame";
     public var projectDir:String = "";
     public var isTestMode:Bool = false;
+    public var platformInfo:String = "";
     
     public function new() {
-        projectDir = Sys.getCwd();
+        projectDir = normalizePath(Sys.getCwd());
+        platformInfo = PlatformUtils.getDetailedInfo();
     }
     
     public function init() {
         var args = Sys.args();
-        if (args.length > 0) {
-            var lastArg = args[args.length - 1];
-            if (lastArg.indexOf("/") != -1 || lastArg.indexOf("\\") != -1) {
-                if (FileSystem.exists(lastArg) && FileSystem.isDirectory(lastArg)) {
-                    projectDir = lastArg;
+        
+        // 查找项目目录参数
+        for (i in 0...args.length) {
+            var arg = args[i];
+            if (isPathArgument(arg)) {
+                if (FileSystem.exists(arg) && FileSystem.isDirectory(arg)) {
+                    projectDir = normalizePath(arg);
+                    break;
                 }
             }
         }
+        
         Sys.setCwd(projectDir);
         
         Console.init();
         Lang.init();
         loadProjectConfig();
+    }
+    
+    // 规范化路径，统一使用正斜杠
+    function normalizePath(path:String):String {
+        var normalized = StringTools.replace(path, "\\", "/");
+        // 移除末尾的斜杠
+        if (normalized.length > 1 && StringTools.endsWith(normalized, "/")) {
+            normalized = normalized.substr(0, normalized.length - 1);
+        }
+        return normalized;
+    }
+    
+    function isPathArgument(arg:String):Bool {
+        if (arg.indexOf("/") != -1 || arg.indexOf("\\") != -1) return true;
+        if (arg.indexOf(":") != -1) return true;
+        if (arg == "." || arg == "..") return true;
+        return false;
     }
     
     function loadProjectConfig() {
@@ -45,8 +69,9 @@ class Config {
     }
     
     public function createDir(path:String) {
-        if (!FileSystem.exists(path)) {
-            FileSystem.createDirectory(path);
+        var normalizedPath = normalizePath(path);
+        if (!FileSystem.exists(normalizedPath)) {
+            FileSystem.createDirectory(normalizedPath);
         }
     }
     
@@ -61,7 +86,6 @@ class Config {
             Console.info("Project directory: " + projectDir);
             Console.println("");
             Console.warning("Please make sure you are in your Heaps project directory.");
-            Console.warning("Or run 'beap init' to create a new project.");
             return false;
         }
         return true;

@@ -2,7 +2,7 @@
 
 -main Main
 
--neko bin/beap.n
+-neko run.n
 
 --dce full
 
