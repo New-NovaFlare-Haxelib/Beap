@@ -1,9 +1,13 @@
 -cp src
--main BeapTool
--neko beap.n
 
---next
+-main Main
 
--cp src
--main Run
--neko run.n
+-neko bin/beap.n
+
+--dce full
+
+-D analyzer-optimize
+
+-D beap_tool
+
+-D no-deprecation-warnings

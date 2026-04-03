@@ -1,6 +1,7 @@
-// Lang.hx - 完整的多语言支持
+package beap;
+
 import sys.FileSystem;
-import StringTools;
+import sys.io.File;
 
 class Lang {
     static var currentLang:String = "en";
@@ -56,26 +57,26 @@ class Lang {
         // 用法帮助
         en.set("need_target", "Usage: beap build <target>");
         en.set("targets", "Targets:");
-        en.set("target_hl", "  hl        - HashLink bytecode (fast development)");
-        en.set("target_windows", "  windows   - Windows executable (.exe)");
-        en.set("target_linux", "  linux     - Linux executable");
-        en.set("target_mac", "  mac       - macOS executable");
-        en.set("target_android", "  android   - Android APK");
-        en.set("target_ios", "  ios       - iOS app");
-        en.set("target_html5", "  html5     - HTML5/JavaScript");
+        en.set("target_hl", "HashLink bytecode (fast development)");
+        en.set("target_windows", "Windows executable (.exe)");
+        en.set("target_linux", "Linux executable");
+        en.set("target_mac", "macOS executable");
+        en.set("target_android", "Android APK");
+        en.set("target_ios", "iOS app");
+        en.set("target_html5", "HTML5/JavaScript");
         en.set("examples", "Examples:");
-        en.set("ex_build_hl", "  beap build hl        # Build HashLink bytecode");
-        en.set("ex_build_windows", "  beap build windows   # Build Windows exe");
-        en.set("ex_test_hl", "  beap test hl          # Build and run HashLink");
-        en.set("ex_test_windows", "  beap test windows     # Build and run Windows exe");
+        en.set("ex_build_hl", "beap build hl        # Build HashLink bytecode");
+        en.set("ex_build_windows", "beap build windows   # Build Windows exe");
+        en.set("ex_test_hl", "beap test hl          # Build and run HashLink");
+        en.set("ex_test_windows", "beap test windows     # Build and run Windows exe");
         
         // 命令帮助
         en.set("commands", "Commands:");
-        en.set("cmd_build", "  build <target>    Build for specific platform");
-        en.set("cmd_test", "  test <target>     Build and run for specific platform");
-        en.set("cmd_stop", "  stop              Stop running game");
-        en.set("cmd_lang", "  lang [en/zh]      Set language for beap");
-        en.set("cmd_help", "  help              Show this help");
+        en.set("cmd_build", "build <target>    Build for specific platform");
+        en.set("cmd_test", "test <target>     Build and run for specific platform");
+        en.set("cmd_stop", "stop              Stop running game");
+        en.set("cmd_lang", "lang [en/zh]      Set language for beap");
+        en.set("cmd_help", "help              Show this help");
         
         // 运行相关
         en.set("running", "Running {0}...");
@@ -103,8 +104,8 @@ class Lang {
         en.set("template_not_found", "Template not found: {0}");
         en.set("edit_config", "Edit .beap to change project name");
         en.set("next_steps", "Next steps:");
-        en.set("cd_project", "  cd {0}");
-        en.set("run_beap", "  beap test hl        # Build and run");
+        en.set("cd_project", "cd {0}");
+        en.set("run_beap", "beap test hl        # Build and run");
         
         // stop 命令
         en.set("stopping_game", "Stopping game...");
@@ -154,26 +155,26 @@ class Lang {
         // 用法帮助
         zh.set("need_target", "使用方法: beap build <目标平台>");
         zh.set("targets", "目标平台:");
-        zh.set("target_hl", "  hl        - HashLink 字节码（快速开发）");
-        zh.set("target_windows", "  windows   - Windows 可执行文件 (.exe)");
-        zh.set("target_linux", "  linux     - Linux 可执行文件");
-        zh.set("target_mac", "  mac       - macOS 可执行文件");
-        zh.set("target_android", "  android   - Android APK");
-        zh.set("target_ios", "  ios       - iOS 应用");
-        zh.set("target_html5", "  html5     - HTML5 / JavaScript");
+        zh.set("target_hl", "HashLink 字节码（快速开发）");
+        zh.set("target_windows", "Windows 可执行文件 (.exe)");
+        zh.set("target_linux", "Linux 可执行文件");
+        zh.set("target_mac", "macOS 可执行文件");
+        zh.set("target_android", "Android APK");
+        zh.set("target_ios", "iOS 应用");
+        zh.set("target_html5", "HTML5 / JavaScript");
         zh.set("examples", "示例:");
-        zh.set("ex_build_hl", "  beap build hl        # 编译 HashLink 字节码");
-        zh.set("ex_build_windows", "  beap build windows   # 编译 Windows 版本");
-        zh.set("ex_test_hl", "  beap test hl          # 编译并运行 HashLink");
-        zh.set("ex_test_windows", "  beap test windows     # 编译并运行 Windows 版本");
+        zh.set("ex_build_hl", "beap build hl        # 编译 HashLink 字节码");
+        zh.set("ex_build_windows", "beap build windows   # 编译 Windows 版本");
+        zh.set("ex_test_hl", "beap test hl          # 编译并运行 HashLink");
+        zh.set("ex_test_windows", "beap test windows     # 编译并运行 Windows 版本");
         
         // 命令帮助
         zh.set("commands", "命令:");
-        zh.set("cmd_build", "  build <目标>    构建指定平台");
-        zh.set("cmd_test", "  test <目标>     构建并运行指定平台");
-        zh.set("cmd_stop", "  stop            停止正在运行的游戏");
-        zh.set("cmd_lang", "  lang [en/zh]    设置 beap 的语言");
-        zh.set("cmd_help", "  help            显示此帮助");
+        zh.set("cmd_build", "build <目标>    构建指定平台");
+        zh.set("cmd_test", "test <目标>     构建并运行指定平台");
+        zh.set("cmd_stop", "stop            停止正在运行的游戏");
+        zh.set("cmd_lang", "lang [en/zh]    设置 beap 的语言");
+        zh.set("cmd_help", "help            显示此帮助");
         
         // 运行相关
         zh.set("running", "正在运行 {0}...");
@@ -201,8 +202,8 @@ class Lang {
         zh.set("template_not_found", "未找到模板: {0}");
         zh.set("edit_config", "编辑 .beap 文件修改项目名称");
         zh.set("next_steps", "下一步:");
-        zh.set("cd_project", "  cd {0}");
-        zh.set("run_beap", "  beap test hl        # 编译并运行");
+        zh.set("cd_project", "cd {0}");
+        zh.set("run_beap", "beap test hl        # 编译并运行");
         
         // stop 命令
         zh.set("stopping_game", "正在停止游戏...");
@@ -263,7 +264,9 @@ class Lang {
         if (lang == "zh" || lang == "en") {
             currentLang = lang;
             if (configPath != null && configPath != "") {
-                sys.io.File.saveContent(configPath, 'lang=$lang\n');
+                try {
+                    sys.io.File.saveContent(configPath, 'lang=$lang\n');
+                } catch (e:Dynamic) {}
             }
         }
     }
