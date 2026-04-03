@@ -17,10 +17,9 @@ class HelpCommand extends BaseCommand {
     }
     
     public function printHelp() {
-        // 显示平台信息
         Console.println("");
-        Console.print("beap - Heaps Build Tool", ConsoleColor.BOLD);
-        Console.println(" (Running on: " + PlatformUtils.getDetailedInfo() + ")", ConsoleColor.BLUE);
+        Console.print(Lang.get("app_name"), ConsoleColor.BOLD);
+        Console.println(" (" + Lang.get("running_on") + ": " + PlatformUtils.getDetailedInfo() + ")", ConsoleColor.BLUE);
         Console.println("");
         
         Console.println(Lang.get("commands"), ConsoleColor.YELLOW);
@@ -28,7 +27,7 @@ class HelpCommand extends BaseCommand {
         Console.println("  " + Lang.get("cmd_test"), ConsoleColor.GREEN);
         Console.println("  " + Lang.get("cmd_stop"), ConsoleColor.GREEN);
         Console.println("  " + Lang.get("cmd_lang"), ConsoleColor.GREEN);
-        Console.println("  setup             Setup beap for direct access", ConsoleColor.GREEN);
+        Console.println("  " + Lang.get("cmd_setup"), ConsoleColor.GREEN);
         Console.println("  " + Lang.get("cmd_help"), ConsoleColor.GREEN);
         Console.println("");
         
@@ -43,16 +42,16 @@ class HelpCommand extends BaseCommand {
         
         Console.println("");
         Console.println(Lang.get("examples"), ConsoleColor.YELLOW);
-        Console.println("  beap setup                # Setup for direct access", ConsoleColor.CYAN);
-        Console.println("  beap build hl             # Build HashLink bytecode", ConsoleColor.CYAN);
-        Console.println("  beap build windows        # Build Windows exe", ConsoleColor.CYAN);
-        Console.println("  beap test hl              # Build and run HashLink", ConsoleColor.CYAN);
+        Console.println("  " + Lang.get("ex_setup"), ConsoleColor.CYAN);
+        Console.println("  " + Lang.get("ex_build_hl"), ConsoleColor.CYAN);
+        Console.println("  " + Lang.get("ex_build_windows"), ConsoleColor.CYAN);
+        Console.println("  " + Lang.get("ex_test_hl"), ConsoleColor.CYAN);
         Console.println("");
         
-        Console.println("Current configuration:", ConsoleColor.MAGENTA);
-        Console.println("  Project: " + this.config.projectName, ConsoleColor.WHITE);
-        Console.println("  Directory: " + this.config.projectDir, ConsoleColor.WHITE);
-        Console.println("  Platform: " + PlatformUtils.getDetailedInfo(), ConsoleColor.WHITE);
+        Console.println(Lang.get("current_config"), ConsoleColor.MAGENTA);
+        Console.println("  " + Lang.get("project") + ": " + this.config.projectName, ConsoleColor.WHITE);
+        Console.println("  " + Lang.get("directory") + ": " + this.config.projectDir, ConsoleColor.WHITE);
+        Console.println("  " + Lang.get("platform") + ": " + PlatformUtils.getDetailedInfo(), ConsoleColor.WHITE);
         Console.println("");
     }
 }

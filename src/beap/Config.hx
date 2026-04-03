@@ -10,6 +10,10 @@ class Config {
     public var isTestMode:Bool = false;
     public var platformInfo:String = "";
     
+    public static inline var BUILD_DIR = "build";
+    public static inline var OUT_DIR = "build/out";
+    public static inline var CACHE_DIR = "build/cache";
+    
     public function new() {
         projectDir = normalizePath(Sys.getCwd());
         platformInfo = PlatformUtils.getDetailedInfo();
@@ -18,7 +22,6 @@ class Config {
     public function init() {
         var args = Sys.args();
         
-        // 查找项目目录参数
         for (i in 0...args.length) {
             var arg = args[i];
             if (isPathArgument(arg)) {
@@ -31,15 +34,18 @@ class Config {
         
         Sys.setCwd(projectDir);
         
+        // 先加载项目配置
+        loadProjectConfig();
+        
         Console.init();
         Lang.init();
-        loadProjectConfig();
+        
+        // 调试：显示加载的项目名称
+        Console.info("Loaded project name: " + projectName);
     }
     
-    // 规范化路径，统一使用正斜杠
     function normalizePath(path:String):String {
         var normalized = StringTools.replace(path, "\\", "/");
-        // 移除末尾的斜杠
         if (normalized.length > 1 && StringTools.endsWith(normalized, "/")) {
             normalized = normalized.substr(0, normalized.length - 1);
         }
@@ -53,41 +59,71 @@ class Config {
         return false;
     }
     
-    function loadProjectConfig() {
-        if (FileSystem.exists(".beap")) {
-            try {
-                var content = File.getContent(".beap");
-                var lines = content.split("\n");
-                for (line in lines) {
-                    var trimmed = StringTools.trim(line);
-                    if (StringTools.startsWith(trimmed, "name=")) {
-                        projectName = StringTools.trim(trimmed.substr(5));
-                    }
-                }
-            } catch (e:Dynamic) {}
-        }
+    public function getBuildDir(platform:String):String {
+        return BUILD_DIR + "/" + platform;
+    }
+    
+    public function getOutDir(platform:String):String {
+        return OUT_DIR + "/" + platform;
+    }
+    
+    public function getCacheDir(platform:String):String {
+        return CACHE_DIR + "/" + platform;
+    }
+    
+    public function getOutputPath(platform:String, ext:String):String {
+        var buildDir = getBuildDir(platform);
+        return buildDir + "/" + projectName + ext;
+    }
+    
+    public function ensureDirectories(platform:String) {
+        createDir(getBuildDir(platform));
+        createDir(getOutDir(platform));
+        createDir(getCacheDir(platform));
     }
     
     public function createDir(path:String) {
-        var normalizedPath = normalizePath(path);
-        if (!FileSystem.exists(normalizedPath)) {
-            FileSystem.createDirectory(normalizedPath);
+        if (!FileSystem.exists(path)) {
+            FileSystem.createDirectory(path);
         }
-    }
-    
-    public function ensureDirectories() {
-        createDir("build");
-        createDir("out");
     }
     
     public function checkProject():Bool {
         if (!FileSystem.exists("src/Main.hx")) {
-            Console.error("src/Main.hx not found!");
-            Console.info("Project directory: " + projectDir);
+            Console.error(Lang.get("src_not_found"));
+            Console.info(Lang.get("project_dir") + ": " + projectDir);
             Console.println("");
-            Console.warning("Please make sure you are in your Heaps project directory.");
+            Console.warning(Lang.get("not_in_project"));
             return false;
         }
         return true;
+    }
+    
+    function loadProjectConfig() {
+        var configFile = ".beap";
+        
+        if (FileSystem.exists(configFile)) {
+            Console.info("Found .beap config file");
+            try {
+                var content = File.getContent(configFile);
+                
+                var lines = content.split("\n");
+                for (line in lines) {
+                    var trimmed = StringTools.trim(line);
+                    if (trimmed == "") continue;
+                    
+                    if (StringTools.startsWith(trimmed, "name=")) {
+                        var name = StringTools.trim(trimmed.substr(5));
+                        if (name != "") {
+                            projectName = name;
+                        }
+                    }
+                }
+            } catch (e:Dynamic) {
+                Console.warning("Failed to read .beap file: " + e);
+            }
+        } else {
+            Console.info("No .beap config file found, using default name: " + projectName);
+        }
     }
 }

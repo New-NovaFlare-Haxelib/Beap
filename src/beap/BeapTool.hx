@@ -11,29 +11,23 @@ class BeapTool {
     static var VERSION = "1.0.0";
     
     public static function main() {
-        // 初始化平台注册表
         PlatformRegistry.init();
         
         config = new Config();
         config.init();
-        
-        // 打印当前运行平台信息
+
         printPlatformInfo();
         
-        // 有效命令列表
         var validCommands = ["build", "test", "stop", "lang", "setup", "help", "-h", "--help"];
         
-        // 找到第一个有效命令
         var commandName = "help";
         var commandArgs = [];
         var args = Sys.args();
         
         for (i in 0...args.length) {
             var arg = args[i];
-            // 检查是否是有效命令
             if (validCommands.indexOf(arg) != -1) {
                 commandName = arg;
-                // 剩余的都是参数
                 for (j in i+1...args.length) {
                     commandArgs.push(args[j]);
                 }
@@ -44,7 +38,7 @@ class BeapTool {
         var command = createCommand(commandName);
         
         if (command == null) {
-            Console.error('Unknown command: $commandName');
+            Console.error(Lang.get("unknown_cmd", [commandName]));
             printHelp();
             return;
         }
@@ -57,8 +51,8 @@ class BeapTool {
         var osArch = PlatformUtils.getArchitecture();
         
         Console.println("", ConsoleColor.RESET);
-        Console.print("beap v" + VERSION + " ", ConsoleColor.BOLD);
-        Console.print("running on ", ConsoleColor.WHITE);
+        Console.print(Lang.get("app_name") + " v" + VERSION + " ", ConsoleColor.BOLD);
+        Console.print(Lang.get("running_on") + " ", ConsoleColor.WHITE);
         
         var osColor = switch (osName) {
             case "Windows": ConsoleColor.CYAN;
@@ -72,7 +66,7 @@ class BeapTool {
         Console.print(osArch, ConsoleColor.YELLOW);
         Console.println(")", ConsoleColor.WHITE);
         
-        Console.println("beap path: " + Sys.getCwd(), ConsoleColor.BLUE);
+        Console.println(Lang.get("beap_path") + ": " + Sys.getCwd(), ConsoleColor.BLUE);
         Console.println("");
     }
     

@@ -9,7 +9,7 @@ import beap.commands.Command.BaseCommand;
 class TestCommand extends BaseCommand {
     public override function execute(args:Array<String>) {
         if (args.length == 0) {
-            Console.println("Usage: beap test <target>", ConsoleColor.YELLOW);
+            Console.println(Lang.get("need_target_test"), ConsoleColor.YELLOW);
             return;
         }
         
@@ -25,7 +25,8 @@ class TestCommand extends BaseCommand {
             Sys.exit(1);
         }
         
-        config.ensureDirectories();
+        // 传入平台名称
+        config.ensureDirectories(platform.getName());
         config.isTestMode = true;
         stopRunningGame();
         
@@ -37,6 +38,8 @@ class TestCommand extends BaseCommand {
     }
     
     function stopRunningGame() {
+        #if windows
         Sys.command('taskkill /f /im "${config.projectName}.exe" 2>nul');
+        #end
     }
 }

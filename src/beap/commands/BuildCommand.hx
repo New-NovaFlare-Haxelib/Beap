@@ -27,7 +27,8 @@ class BuildCommand extends BaseCommand {
             Sys.exit(1);
         }
         
-        config.ensureDirectories();
+        // 传入平台名称
+        config.ensureDirectories(platform.getName());
         stopRunningGame();
         platform.build(config);
     }
@@ -41,6 +42,8 @@ class BuildCommand extends BaseCommand {
     }
     
     function stopRunningGame() {
+        #if windows
         Sys.command('taskkill /f /im "${config.projectName}.exe" 2>nul');
+        #end
     }
 }

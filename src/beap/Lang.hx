@@ -9,14 +9,29 @@ class Lang {
     static var configPath:String = "";
     
     public static function init() {
+        // 获取配置文件路径
         var home = Sys.getEnv("USERPROFILE");
         if (home == null) home = Sys.getEnv("HOME");
         if (home != null) {
             configPath = home + "/.beaprc";
         }
-
-        // ========== 英文翻译 ==========
+        
+        // 加载英文
+        loadEnglish();
+        
+        // 加载中文
+        loadChinese();
+        
+        // 加载用户语言设置
+        loadLangSetting();
+    }
+    
+    static function loadEnglish() {
         var en = new Map<String, String>();
+        
+        // 通用
+        en.set("app_name", "beap - Heaps Build Tool");
+        en.set("version", "1.0.0");
         en.set("lang_switched", "Language switched to English");
         en.set("unknown_lang", "Unknown language: {0}");
         en.set("unknown_cmd", "Unknown command: {0}");
@@ -35,6 +50,8 @@ class Lang {
         en.set("compile_hl", "Compiling Haxe to HashLink...");
         en.set("compile_haxe", "Compiling Haxe to C...");
         en.set("compile_exe", "Compiling to EXE with MSVC...");
+        en.set("compile_success", "Compilation successful!");
+        en.set("compile_failed", "Compilation failed!");
         
         // 结果相关
         en.set("build_success", "Build complete: {0}");
@@ -76,6 +93,7 @@ class Lang {
         en.set("cmd_test", "test <target>     Build and run for specific platform");
         en.set("cmd_stop", "stop              Stop running game");
         en.set("cmd_lang", "lang [en/zh]      Set language for beap");
+        en.set("cmd_setup", "setup             Setup beap for direct access");
         en.set("cmd_help", "help              Show this help");
         
         // 运行相关
@@ -111,10 +129,34 @@ class Lang {
         en.set("stopping_game", "Stopping game...");
         en.set("game_not_running", "No running game found.");
         
-        translations.set("en", en);
+        // setup 命令
+        en.set("setting_up", "Setting up beap for direct access...");
+        en.set("setup_success", "beap has been set up successfully!");
+        en.set("setup_failed", "Setup failed: {0}");
 
-        // ========== 中文翻译 ==========
+        en.set("running_on", "running on");
+        en.set("beap_path", "beap path");
+        en.set("current_config", "Current configuration:");
+        en.set("project", "Project");
+        en.set("directory", "Directory");
+        en.set("platform", "Platform");
+        en.set("ex_setup", "beap setup                # Setup for direct access");
+
+        en.set("project_dir", "Project directory");
+
+        en.set("need_target_test", "Usage: beap test <target>");
+        en.set("build_success_hl", "Build complete: build/{0}.hl");
+        en.set("build_success_exe", "Build complete: build/{0}.exe");
+        
+        translations.set("en", en);
+    }
+    
+    static function loadChinese() {
         var zh = new Map<String, String>();
+        
+        // 通用
+        zh.set("app_name", "beap - Heaps 构建工具");
+        zh.set("version", "1.0.0");
         zh.set("lang_switched", "已切换语言为中文");
         zh.set("unknown_lang", "未知语言: {0}");
         zh.set("unknown_cmd", "未知命令: {0}");
@@ -133,6 +175,8 @@ class Lang {
         zh.set("compile_hl", "正在将 Haxe 编译为 HashLink 字节码...");
         zh.set("compile_haxe", "正在将 Haxe 编译为 C 代码...");
         zh.set("compile_exe", "正在使用 MSVC 编译为 EXE...");
+        zh.set("compile_success", "编译成功！");
+        zh.set("compile_failed", "编译失败！");
         
         // 结果相关
         zh.set("build_success", "编译完成: {0}");
@@ -174,6 +218,7 @@ class Lang {
         zh.set("cmd_test", "test <目标>     构建并运行指定平台");
         zh.set("cmd_stop", "stop            停止正在运行的游戏");
         zh.set("cmd_lang", "lang [en/zh]    设置 beap 的语言");
+        zh.set("cmd_setup", "setup           设置 beap 为直接访问");
         zh.set("cmd_help", "help            显示此帮助");
         
         // 运行相关
@@ -209,17 +254,35 @@ class Lang {
         zh.set("stopping_game", "正在停止游戏...");
         zh.set("game_not_running", "没有找到正在运行的游戏。");
         
-        translations.set("zh", zh);
+        // setup 命令
+        zh.set("setting_up", "正在设置 beap 为直接访问...");
+        zh.set("setup_success", "beap 设置成功！");
+        zh.set("setup_failed", "设置失败: {0}");
 
-        loadLangSetting();
+
+        zh.set("running_on", "运行在");
+        zh.set("beap_path", "beap 路径");
+        zh.set("current_config", "当前配置:");
+        zh.set("project", "项目");
+        zh.set("directory", "目录");
+        zh.set("platform", "平台");
+        zh.set("ex_setup", "beap setup                # 设置直接访问");
+
+        zh.set("project_dir", "项目目录");
+
+        zh.set("need_target_test", "使用方法: beap test <目标平台>");
+        zh.set("build_success_hl", "编译完成: build/{0}.hl");
+        zh.set("build_success_exe", "编译完成: build/{0}.exe");
+        
+        translations.set("zh", zh);
     }
     
     static function loadLangSetting() {
         if (configPath == null || configPath == "") return;
-        if (!sys.FileSystem.exists(configPath)) return;
+        if (!FileSystem.exists(configPath)) return;
         
         try {
-            var content = sys.io.File.getContent(configPath);
+            var content = File.getContent(configPath);
             var lines = content.split("\n");
             
             for (line in lines) {
@@ -248,7 +311,7 @@ class Lang {
         if (text == null) {
             var enMap = translations.get("en");
             if (enMap != null) text = enMap.get(key);
-            if (text == null) return key;
+            if (text == null) return "???" + key + "???";
         }
         
         if (args != null) {
@@ -265,7 +328,7 @@ class Lang {
             currentLang = lang;
             if (configPath != null && configPath != "") {
                 try {
-                    sys.io.File.saveContent(configPath, 'lang=$lang\n');
+                    File.saveContent(configPath, 'lang=$lang\n');
                 } catch (e:Dynamic) {}
             }
         }

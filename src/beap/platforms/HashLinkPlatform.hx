@@ -21,23 +21,29 @@ class HashLinkPlatform implements Platform {
     public function build(config:Config):Bool {
         Console.println(Lang.get("build_hl"), ConsoleColor.BOLD);
         
-        var hxmlContent = getBuildHxml(config);
-        File.saveContent("build.hxml", hxmlContent);
+        var platform = getName();
+        config.ensureDirectories(platform);
+        
+        var hxmlContent = getBuildHxml(config, platform);
+        var hxmlPath = config.getBuildDir(platform) + "/build.hxml";
+        File.saveContent(hxmlPath, hxmlContent);
         
         Console.info(Lang.get("compile_hl"));
-        var exitCode = Sys.command("haxe", ["build.hxml"]);
+        var exitCode = Sys.command("haxe", [hxmlPath]);
         
         if (exitCode != 0) {
             Console.error(Lang.get("build_failed"));
             return false;
         }
         
-        Console.success(Lang.get("build_success", ["build/" + config.projectName + ".hl"]));
+        var outputPath = config.getOutputPath(platform, ".hl");
+        Console.success(Lang.get("build_success", [outputPath]));
         return true;
     }
     
     public function run(config:Config):Void {
-        var hlFile = 'build/${config.projectName}.hl';
+        var platform = getName();
+        var hlFile = config.getOutputPath(platform, ".hl");
         
         if (!sys.FileSystem.exists(hlFile)) {
             Console.error(Lang.get("hl_file_not_found"));
@@ -45,14 +51,25 @@ class HashLinkPlatform implements Platform {
         }
         
         Console.success(Lang.get("running", [config.projectName]));
+        #if windows
         Sys.command('start "" hl "$hlFile"');
+        #else
+        Sys.command('hl $hlFile');
+        #end
     }
     
-    function getBuildHxml(config:Config):String {
+    function getBuildHxml(config:Config, platform:String):String {
+        var buildDir = config.getBuildDir(platform);
+        var outDir = config.getOutDir(platform);
+        var outputPath = config.getOutputPath(platform, ".hl");
+        
         if (sys.FileSystem.exists("build.hxml")) {
             Console.info("Using user's build.hxml");
             try {
-                return File.getContent("build.hxml");
+                var content = File.getContent("build.hxml");
+                // 替换输出路径
+                content = StringTools.replace(content, "$output", outputPath);
+                return content;
             } catch (e:Dynamic) {
                 Console.warning("Failed to read build.hxml, using default.");
             }
@@ -68,7 +85,7 @@ class HashLinkPlatform implements Platform {
 -D windowTitle=${config.projectName}
 -D windowSize=1280x720
 -D debug
--hl build/${config.projectName}.hl
+-hl $outputPath
 ';
     }
 }
