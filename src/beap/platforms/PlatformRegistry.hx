@@ -19,14 +19,8 @@ class PlatformRegistry {
     }
     
     public static function init() {
-        // Register all available platforms
         register(new HashLinkPlatform());
         register(new WindowsPlatform());
-        // TODO: Add more platforms here
-        // register(new LinuxPlatform());
-        // register(new MacPlatform());
-        // register(new AndroidPlatform());
-        // register(new IosPlatform());
-        // register(new Html5Platform());
+        register(new AndroidPlatform());
     }
 }

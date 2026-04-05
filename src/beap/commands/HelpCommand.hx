@@ -43,6 +43,7 @@ class HelpCommand extends BaseCommand {
         Console.println("");
         Console.println(Lang.get("examples"), ConsoleColor.YELLOW);
         Console.println("  " + Lang.get("ex_setup"), ConsoleColor.CYAN);
+        Console.println("  beap setup android      # Configure Android SDK/NDK", ConsoleColor.CYAN);
         Console.println("  " + Lang.get("ex_build_hl"), ConsoleColor.CYAN);
         Console.println("  " + Lang.get("ex_build_windows"), ConsoleColor.CYAN);
         Console.println("  " + Lang.get("ex_test_hl"), ConsoleColor.CYAN);

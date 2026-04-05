@@ -6,10 +6,16 @@ import beap.Lang;
 import beap.utils.PlatformUtils;
 import sys.FileSystem;
 import sys.io.File;
+import sys.io.Process;
 import beap.commands.Command.BaseCommand;
 
 class SetupCommand extends BaseCommand {
     public override function execute(args:Array<String>) {
+        if (args.length > 0 && args[0] == "android") {
+            setupAndroid();
+            return;
+        }
+        
         Console.println(Lang.get("setting_up"), ConsoleColor.BOLD);
         Console.println("");
         
@@ -21,6 +27,167 @@ class SetupCommand extends BaseCommand {
             Console.error("Unsupported OS: " + PlatformUtils.getSystemName());
             Console.println("Please manually add beap to your PATH");
         }
+    }
+    
+    // Android SDK/NDK 交互式设置
+    public static function setupAndroid():Void {
+        Console.println("Android SDK/NDK Setup", ConsoleColor.BOLD);
+        Console.println("");
+        
+        var configPath = getConfigPath();
+        var currentSdk = getConfigValue("android_sdk");
+        var currentNdk = getConfigValue("android_ndk");
+        
+        // 显示当前配置
+        Console.println("Current configuration:", ConsoleColor.YELLOW);
+        if (currentSdk != null && currentSdk != "") {
+            Console.println("  Android SDK: " + currentSdk, ConsoleColor.GREEN);
+        } else {
+            Console.println("  Android SDK: [not set]", ConsoleColor.RED);
+        }
+        if (currentNdk != null && currentNdk != "") {
+            Console.println("  Android NDK: " + currentNdk, ConsoleColor.GREEN);
+        } else {
+            Console.println("  Android NDK: [not set]", ConsoleColor.RED);
+        }
+        Console.println("");
+        
+        // 设置 SDK 路径
+        Console.print("Enter Android SDK path (or press Enter to skip): ", ConsoleColor.CYAN);
+        var sdkPath = Sys.stdin().readLine();
+        if (sdkPath != null && StringTools.trim(sdkPath) != "") {
+            sdkPath = StringTools.trim(sdkPath);
+            if (FileSystem.exists(sdkPath)) {
+                setConfigValue("android_sdk", sdkPath);
+                Console.success("Android SDK set to: " + sdkPath);
+            } else {
+                Console.error("Path does not exist: " + sdkPath);
+            }
+        }
+        
+        Console.println("");
+        
+        // 设置 NDK 路径
+        Console.print("Enter Android NDK path (or press Enter to skip): ", ConsoleColor.CYAN);
+        var ndkPath = Sys.stdin().readLine();
+        if (ndkPath != null && StringTools.trim(ndkPath) != "") {
+            ndkPath = StringTools.trim(ndkPath);
+            if (FileSystem.exists(ndkPath)) {
+                setConfigValue("android_ndk", ndkPath);
+                Console.success("Android NDK set to: " + ndkPath);
+            } else {
+                Console.error("Path does not exist: " + ndkPath);
+            }
+        }
+        
+        Console.println("");
+        Console.success("Android configuration complete!");
+        Console.println("You can now run: beap build android", ConsoleColor.CYAN);
+    }
+    
+    // 检查并提示设置 Android 环境（用于 build/test 命令）
+    public static function checkAndSetupAndroid():Bool {
+        var androidSdk = getConfigValue("android_sdk");
+        var androidNdk = getConfigValue("android_ndk");
+        
+        // 也检查环境变量
+        if (androidSdk == null || androidSdk == "") {
+            androidSdk = Sys.getEnv("ANDROID_HOME");
+            if (androidSdk == null) androidSdk = Sys.getEnv("ANDROID_SDK_ROOT");
+        }
+        if (androidNdk == null || androidNdk == "") {
+            androidNdk = Sys.getEnv("ANDROID_NDK_HOME");
+            if (androidNdk == null) androidNdk = Sys.getEnv("NDK_HOME");
+        }
+        
+        if (androidSdk == null || androidSdk == "" || androidNdk == null || androidNdk == "") {
+            Console.warning("Android SDK/NDK not configured!");
+            Console.println("");
+            Console.println("Would you like to configure Android SDK/NDK now? (y/N): ", ConsoleColor.YELLOW);
+            var answer = Sys.stdin().readLine();
+            if (answer != null && (answer.toLowerCase() == "y" || answer.toLowerCase() == "yes")) {
+                setupAndroid();
+                // 重新读取配置
+                androidSdk = getConfigValue("android_sdk");
+                androidNdk = getConfigValue("android_ndk");
+                if (androidSdk == null || androidSdk == "") {
+                    androidSdk = Sys.getEnv("ANDROID_HOME");
+                }
+                if (androidNdk == null || androidNdk == "") {
+                    androidNdk = Sys.getEnv("ANDROID_NDK_HOME");
+                }
+            }
+        }
+        
+        if (androidSdk == null || androidSdk == "" || androidNdk == null || androidNdk == "") {
+            Console.error("Android SDK/NDK not configured!");
+            Console.println("Run 'beap setup android' to configure", ConsoleColor.CYAN);
+            return false;
+        }
+        
+        return true;
+    }
+    
+    public static function getConfigValue(key:String):String {
+        var configPath = getConfigPath();
+        if (FileSystem.exists(configPath)) {
+            try {
+                var content = File.getContent(configPath);
+                var lines = content.split("\n");
+                for (line in lines) {
+                    var trimmed = StringTools.trim(line);
+                    if (trimmed == "" || trimmed.charAt(0) == "#") continue;
+                    if (trimmed.indexOf(key + "=") == 0) {
+                        return trimmed.substr(key.length + 1);
+                    }
+                }
+            } catch (e:Dynamic) {}
+        }
+        return null;
+    }
+    
+    public static function setConfigValue(key:String, value:String):Void {
+        var configPath = getConfigPath();
+        var config = new Map<String, String>();
+        
+        // 读取现有配置
+        if (FileSystem.exists(configPath)) {
+            try {
+                var content = File.getContent(configPath);
+                var lines = content.split("\n");
+                for (line in lines) {
+                    var trimmed = StringTools.trim(line);
+                    if (trimmed == "" || trimmed.charAt(0) == "#") continue;
+                    var eqPos = trimmed.indexOf("=");
+                    if (eqPos > 0) {
+                        var k = StringTools.trim(trimmed.substr(0, eqPos));
+                        var v = StringTools.trim(trimmed.substr(eqPos + 1));
+                        config.set(k, v);
+                    }
+                }
+            } catch (e:Dynamic) {}
+        }
+        
+        // 设置新值
+        config.set(key, value);
+        
+        // 保存配置
+        var lines = [];
+        for (k in config.keys()) {
+            lines.push(k + "=" + config.get(k));
+        }
+        
+        try {
+            File.saveContent(configPath, lines.join("\n"));
+        } catch (e:Dynamic) {
+            Console.error("Failed to save config: " + e);
+        }
+    }
+    
+    static function getConfigPath():String {
+        var home = Sys.getEnv("USERPROFILE");
+        if (home == null) home = Sys.getEnv("HOME");
+        return home + "/.beaprc";
     }
     
     function setupWindows() {
@@ -57,11 +224,11 @@ class SetupCommand extends BaseCommand {
         }
         
         var content = '@echo off
-    rem beap - Heaps Build Tool
-    rem Generated by beap setup
+rem beap - Heaps Build Tool
+rem Generated by beap setup
 
-    ' + nekoPath + ' "' + beapNPath + '" %*
-    ';
+' + nekoPath + ' "' + beapNPath + '" %*
+';
         
         try {
             File.saveContent(beapCmd, content);
@@ -133,7 +300,7 @@ BEAP_HOME="' + beapHome + '"
     
     function getBeapHome():String {
         try {
-            var process = new sys.io.Process("haxelib", ["path", "beap"]);
+            var process = new Process("haxelib", ["path", "beap"]);
             var output = process.stdout.readAll().toString();
             process.close();
             
@@ -170,7 +337,6 @@ BEAP_HOME="' + beapHome + '"
             Console.info("haxelib path beap failed: " + e);
         }
         
-        // 方法2: 从当前项目的 .haxelib 目录获取
         var currentDir = Sys.getCwd();
         var haxelibLocalPath = currentDir + "\\.haxelib\\beap";
         if (FileSystem.exists(haxelibLocalPath + "\\run.n")) {
@@ -178,7 +344,6 @@ BEAP_HOME="' + beapHome + '"
             return haxelibLocalPath;
         }
         
-        // 方法3: 从用户 haxelib 目录获取
         var userProfile = Sys.getEnv("USERPROFILE");
         if (userProfile != null) {
             var userHaxelibPath = userProfile + "\\haxelib\\beap";
@@ -186,7 +351,6 @@ BEAP_HOME="' + beapHome + '"
                 Console.info("Found beap at user haxelib: " + userHaxelibPath);
                 return userHaxelibPath;
             }
-            // 也检查 git 子目录
             var userHaxelibGitPath = userProfile + "\\haxelib\\beap\\git";
             if (FileSystem.exists(userHaxelibGitPath + "\\run.n")) {
                 Console.info("Found beap at user haxelib: " + userHaxelibGitPath);
@@ -194,7 +358,6 @@ BEAP_HOME="' + beapHome + '"
             }
         }
         
-        // 方法4: 从全局 haxelib 目录获取
         var globalPaths = [
             "C:\\HaxeToolkit\\lib\\beap",
             "C:\\HaxeToolkit\\haxe\\lib\\beap",
@@ -216,15 +379,13 @@ BEAP_HOME="' + beapHome + '"
     }
     
     function getHaxeDir():String {
-        // 使用 where 命令查找 haxe.exe
         try {
-            var process = new sys.io.Process("where", ["haxe"]);
+            var process = new Process("where", ["haxe"]);
             var output = process.stdout.readAll().toString();
             process.close();
             var lines = output.split("\n");
             if (lines.length > 0 && lines[0] != "") {
                 var haxePath = StringTools.trim(lines[0]);
-                // 获取 haxe.exe 所在目录
                 var lastSlash = haxePath.lastIndexOf("\\");
                 if (lastSlash != -1) {
                     return haxePath.substr(0, lastSlash);
@@ -232,7 +393,6 @@ BEAP_HOME="' + beapHome + '"
             }
         } catch (e:Dynamic) {}
         
-        // 常见安装路径
         var commonPaths = [
             "C:\\HaxeToolkit\\haxe",
             "C:\\Program Files\\Haxe",
@@ -251,13 +411,11 @@ BEAP_HOME="' + beapHome + '"
     function getNekoPath():String {
         var nekoCmd = "neko";
         
-        // 检查 neko 是否在 PATH 中
         var result = Sys.command(nekoCmd + " -version 2> nul");
         if (result == 0) {
             return nekoCmd;
         }
         
-        // 尝试常见路径
         var commonPaths = [
             "C:\\HaxeToolkit\\neko",
             "C:\\Program Files\\Neko",
