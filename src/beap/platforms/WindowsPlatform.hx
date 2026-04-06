@@ -190,7 +190,7 @@ class WindowsPlatform implements Platform {
 -main Main
 -lib heaps
 -lib format
--lib hldx
+-lib hlsdl
 -D windowTitle=${config.projectName}
 -D windowSize=1280x720
 -D windowResizable
@@ -198,48 +198,99 @@ class WindowsPlatform implements Platform {
 ';
     }
     
-    function buildCompileCommand(config:Config, platform:String, hlDir:String, cFile:String):String {
-        var buildDir = config.getBuildDir(platform);
-        var exeFile = buildDir + "/" + config.projectName + ".exe";
-        var objFile = buildDir + "/" + config.projectName + ".obj";
+function buildCompileCommand(config:Config, platform:String, hlDir:String, cFile:String):String {
+    var buildDir = config.getBuildDir(platform);
+    var exeFile = buildDir + "/" + config.projectName + ".exe";
+    
+    // 确保 C 文件存在
+    if (!FileSystem.exists(cFile)) {
+        Console.error("C file not found: " + cFile);
+        return "";
+    }
+    
+    var currentDir = StringTools.replace(Sys.getCwd(), "\\", "/");
+    if (StringTools.endsWith(currentDir, "/")) {
+        currentDir = currentDir.substr(0, currentDir.length - 1);
+    }
+    
+    var hlDirFixed = StringTools.replace(hlDir, "\\", "/");
+    if (StringTools.endsWith(hlDirFixed, "/")) {
+        hlDirFixed = hlDirFixed.substr(0, hlDirFixed.length - 1);
+    }
+    
+    // 获取 C 文件所在目录
+    var cFileDir = Path.directory(cFile);
+    var includeArgs = ' /I "' + hlDirFixed + '/include" /I "' + currentDir + '/' + cFileDir + '"';
+    
+    // 从 BEAP tools 目录查找库
+    var beapToolsDir = getBeapToolsDir();
+    var libArgs = "";
+    
+    // 需要的库文件（.lib 导入库）
+    var libFiles = ["libhl.lib", "sdl.lib", "ui.lib", "fmt.lib", "uv.lib"];
+    
+    for (lib in libFiles) {
+        var found = false;
         
-        // 确保 C 文件存在
-        if (!FileSystem.exists(cFile)) {
-            Console.error("C file not found: " + cFile);
-            return "";
-        }
-        
-        var currentDir = StringTools.replace(Sys.getCwd(), "\\", "/");
-        if (StringTools.endsWith(currentDir, "/")) {
-            currentDir = currentDir.substr(0, currentDir.length - 1);
-        }
-        
-        var hlDirFixed = StringTools.replace(hlDir, "\\", "/");
-        if (StringTools.endsWith(hlDirFixed, "/")) {
-            hlDirFixed = hlDirFixed.substr(0, hlDirFixed.length - 1);
-        }
-        
-        // 获取 C 文件所在目录
-        var cFileDir = Path.directory(cFile);
-        var includeArgs = ' /I "' + hlDirFixed + '/include" /I "' + currentDir + '/' + cFileDir + '"';
-        var libPath = hlDirFixed;
-        
-        var libFiles = ["libhl.lib", "directx.lib", "ui.lib", "fmt.lib", "uv.lib"];
-        var libArgs = "";
-        for (lib in libFiles) {
-            var fullPath = libPath + "/" + lib;
-            if (FileSystem.exists(fullPath)) {
-                libArgs += ' "' + fullPath + '"';
-            } else {
-                Console.warning(lib + " not found at " + fullPath);
+        // 先从 BEAP tools 目录找
+        if (beapToolsDir != "") {
+            var beapLibPath = beapToolsDir + "/" + lib;
+            if (FileSystem.exists(beapLibPath)) {
+                libArgs += ' "' + beapLibPath + '"';
+                found = true;
+                Console.info("Found " + lib + " in BEAP tools: " + beapLibPath);
             }
         }
         
-        var subsystem = config.isTestMode ? "/SUBSYSTEM:CONSOLE" : "/SUBSYSTEM:WINDOWS";
-        return 'cl "' + cFile + '"' + includeArgs + ' /link' + libArgs + 
-               ' user32.lib opengl32.lib gdi32.lib shell32.lib d3d11.lib dxgi.lib d3dcompiler.lib ' + 
-               subsystem + ' /Fe:"' + exeFile + '" /nologo';
+        // 再从 HashLink 目录找
+        if (!found) {
+            var hlLibPath = hlDirFixed + "/" + lib;
+            if (FileSystem.exists(hlLibPath)) {
+                libArgs += ' "' + hlLibPath + '"';
+                found = true;
+            }
+        }
+        
+        if (!found) {
+            Console.warning(lib + " not found in BEAP tools or HashLink directory");
+        }
     }
+    
+    var subsystem = config.isTestMode ? "/SUBSYSTEM:CONSOLE" : "/SUBSYSTEM:WINDOWS";
+    return 'cl "' + cFile + '"' + includeArgs + ' /link' + libArgs + 
+           ' user32.lib opengl32.lib gdi32.lib shell32.lib d3d11.lib dxgi.lib d3dcompiler.lib ' + 
+           subsystem + ' /Fe:"' + exeFile + '" /nologo';
+}
+
+// 添加获取 BEAP tools 目录的方法
+function getBeapToolsDir():String {
+    // 方法1：从当前项目路径查找
+    var projectToolsDir = Sys.getCwd() + "/.haxelib/beap/git/tools/windows";
+    if (FileSystem.exists(projectToolsDir)) {
+        return projectToolsDir;
+    }
+    
+    // 方法2：从 haxelib 路径查找
+    try {
+        var process = new sys.io.Process("haxelib", ["path", "beap"]);
+        var output = process.stdout.readAll().toString();
+        process.close();
+        
+        var lines = output.split("\n");
+        if (lines.length > 0) {
+            var path = StringTools.trim(lines[0]);
+            while (StringTools.endsWith(path, "/") || StringTools.endsWith(path, "\\")) {
+                path = path.substr(0, path.length - 1);
+            }
+            var beapToolsDir = path + "/tools/windows";
+            if (FileSystem.exists(beapToolsDir)) {
+                return beapToolsDir;
+            }
+        }
+    } catch (e:Dynamic) {}
+    
+    return "";
+}
     
     function moveOutputFiles(config:Config, platform:String):Bool {
         var buildDir = config.getBuildDir(platform);
