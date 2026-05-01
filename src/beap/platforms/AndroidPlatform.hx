@@ -3,68 +3,76 @@ package beap.platforms;
 import beap.Config;
 import beap.Console;
 import beap.Lang;
-import beap.utils.PlatformUtils;
 import sys.io.File;
 import sys.FileSystem;
 import haxe.io.Path;
 import sys.io.Process;
+
 import beap.commands.SetupCommand;
 
+/**
+ * Android Platform - HashLink/C (HLC) target
+ */
 class AndroidPlatform implements Platform {
-    var gradleVersion = "8.7";
+    
+    // 支持的 ABI
+    static final ABIS = ["arm64-v8a", "armeabi-v7a", "x86_64"];
+    static final DEFAULT_ABI = "arm64-v8a";
     
     public function new() {}
     
     public function getName():String return "android";
     
     public function getDescription():String {
-        return "Android APK (compiles to C with NDK)";
+        return "Android APK (HashLink/C native)";
     }
     
     public function isAvailable():Bool {
-        return getAndroidSdk() != null;
+        if (getAndroidSdk() != null && getAndroidNdk() != null) {
+            return true;
+        }
+        
+        var sdk = SetupCommand.getConfigValue("android_sdk");
+        var ndk = SetupCommand.getConfigValue("android_ndk");
+        
+        return sdk != null && sdk != "" && ndk != null && ndk != "";
     }
     
     public function build(config:Config):Bool {
         Console.println(Lang.get("build_android"), ConsoleColor.BOLD);
         
-        if (!checkAndSetupAndroid()) {
-            return false;
-        }
-        
         var platform = getName();
         config.ensureDirectories(platform);
         
+        // 1. 生成 C 代码
+        if (!generateCCode(config)) {
+            return false;
+        }
+        
+        // 2. 创建 Android 项目结构
         createAndroidProject(config);
         
-        var hxmlContent = getBuildHxml(config, platform);
-        var hxmlPath = config.getBuildDir(platform) + "/build-android.hxml";
-        File.saveContent(hxmlPath, hxmlContent);
-        
-        Console.info("Compiling Haxe to C...");
-        var exitCode = Sys.command("haxe", [hxmlPath]);
-        if (exitCode != 0) {
-            Console.error(Lang.get("build_failed"));
+        // 3. 复制 HashLink 运行时库
+        if (!copyHashLinkLibraries(config)) {
             return false;
         }
         
-        copyCFiles(config);
+        // 4. 复制资源
         copyResources(config);
         
-        Console.info("Building APK with Gradle and NDK...");
-        if (!runGradle(config)) {
+        // 5. 使用 Gradle + NDK 构建
+        if (!buildWithGradle(config)) {
             return false;
         }
         
-        var outputPath = config.getOutputPath(platform, ".apk");
-        Console.success(Lang.get("build_success", [outputPath]));
+        Console.success(Lang.get("build_success", [config.getOutputPath(platform, ".apk")]));
         return true;
     }
     
     public function run(config:Config):Void {
         var platform = getName();
         var apkPath = config.getOutputPath(platform, ".apk");
-
+        
         if (!FileSystem.exists(apkPath)) {
             Console.info("APK not found, building first...");
             if (!build(config)) {
@@ -74,980 +82,923 @@ class AndroidPlatform implements Platform {
         }
         
         var adbPath = getAdbPath();
-        if (adbPath == "") {
-            Console.error("ADB not found!");
-            Console.info("Please install Android Platform Tools");
-            Console.info("Manual install: adb install -r \"" + apkPath + "\"");
+        if (adbPath == "" || !FileSystem.exists(adbPath)) {
+            Console.error("ADB not found! Check Android SDK installation.");
             return;
         }
         
-        Console.info("Installing APK to device...");
-        try {
-            var installProc = new Process(adbPath, ["install", "-r", apkPath]);
-            installProc.exitCode();  // 等待安装完成
-            var exitCode = installProc.exitCode();
-            installProc.close();
-            
-            if (exitCode != 0) {
-                Console.error("Installation failed with code: " + exitCode);
-                return;
-            }
-        } catch (e:Dynamic) {
-            Console.error("Failed to run adb: " + e);
+        Console.info("Installing APK...");
+        var installProc = new Process(adbPath, ["install", "-r", apkPath]);
+        var exitCode = installProc.exitCode();
+        installProc.close();
+        
+        if (exitCode != 0) {
+            Console.error("Installation failed!");
             return;
         }
         
-        Console.info("Starting app...");
+        Console.info("Starting application...");
         var packageName = getPackageName(config);
-        try {
-            var startProc = new Process(adbPath, ["shell", "am", "start", "-n", packageName + "/.MainActivity"]);
-            startProc.close();
-        } catch (e:Dynamic) {
-            Console.error("Failed to start app: " + e);
-        }
+        var startProc = new Process(adbPath, [
+            "shell", "am", "start", 
+            "-n", packageName + "/" + packageName + ".MainActivity"
+        ]);
+        startProc.close();
         
-        Console.success(Lang.get("running", [config.projectName]));
+        Console.success("Application started!");
+        
+        // 可选：查看日志
+        Console.info("Showing logcat (Ctrl+C to stop)...");
+        Sys.command(adbPath, ["logcat", "-c"]); // 清除旧日志
+        Sys.command(adbPath, ["logcat", "-s", "Heaps:D", "SDL:D", "AndroidRuntime:E"]);
     }
     
-    function checkAndSetupAndroid():Bool {
-        var androidSdk = getAndroidSdk();
-        var androidNdk = getAndroidNdk();
+    // ==================== 核心构建步骤 ====================
+    
+    function generateCCode(config:Config):Bool {
+        Console.info("Step 1: Generating C code from Haxe...");
         
-        if (androidSdk == null || androidNdk == null) {
-            Console.warning("Android SDK/NDK not configured!");
-            Console.println("");
-            Console.println("Would you like to configure Android SDK/NDK now? (y/N): ", ConsoleColor.YELLOW);
-            var answer = Sys.stdin().readLine();
-            if (answer != null && (answer.toLowerCase() == "y" || answer.toLowerCase() == "yes")) {
-                SetupCommand.setupAndroid();
-                androidSdk = getAndroidSdk();
-                androidNdk = getAndroidNdk();
+        var platform = getName();
+        var outDir = config.getOutDir(platform);
+        var cFile = outDir + "/" + config.projectName + ".c";
+        
+        // 确保输出目录存在
+        if (!FileSystem.exists(outDir)) {
+            FileSystem.createDirectory(outDir);
+        }
+        
+        var hxmlContent = getBuildHxml(config, platform);
+        var hxmlPath = config.getBuildDir(platform) + "/build-android.hxml";
+        File.saveContent(hxmlPath, hxmlContent);
+        
+        var exitCode = Sys.command("haxe", [hxmlPath]);
+        if (exitCode != 0) {
+            Console.error("Haxe compilation failed!");
+            return false;
+        }
+        
+        // 验证 C 文件生成
+        if (!FileSystem.exists(cFile)) {
+            // Haxe 可能生成在根目录
+            var rootCFile = config.projectName + ".c";
+            if (FileSystem.exists(rootCFile)) {
+                File.copy(rootCFile, cFile);
+                FileSystem.deleteFile(rootCFile);
+            } else {
+                Console.error("C file not generated: " + cFile);
+                return false;
             }
         }
         
-        if (androidSdk == null) {
-            Console.error(Lang.get("android_sdk_not_found"));
-            Console.println("Run 'beap setup android' to configure");
-            return false;
-        }
-        
-        if (androidNdk == null) {
-            Console.error(Lang.get("android_ndk_not_found"));
-            Console.println("Run 'beap setup android' to configure");
-            return false;
-        }
-        
-        Console.success(Lang.get("android_sdk_set", [androidSdk]));
-        Console.success(Lang.get("android_ndk_set", [androidNdk]));
-        
-        var javaResult = Sys.command("java -version > nul 2>&1");
-        if (javaResult != 0) {
-            Console.error(Lang.get("android_java_not_found"));
-            return false;
-        }
-        
+        Console.success("C code generated: " + cFile);
         return true;
     }
     
-    function getAndroidSdk():String {
-        var home = Sys.getEnv("USERPROFILE");
-        if (home == null) home = Sys.getEnv("HOME");
-        if (home != null) {
-            var configPath = home + "/.beaprc";
-            if (FileSystem.exists(configPath)) {
-                try {
-                    var content = File.getContent(configPath);
-                    var lines = content.split("\n");
-                    for (line in lines) {
-                        if (line.indexOf("android_sdk=") == 0) {
-                            var path = line.substr(12);
-                            path = StringTools.trim(path);
-                            if (FileSystem.exists(path)) {
-                                return path;
-                            }
-                        }
-                    }
-                } catch (e:Dynamic) {}
-            }
-        }
+    function createAndroidProject(config:Config):Void {
+        Console.info("Step 2: Creating Android project structure...");
         
-        var androidHome = Sys.getEnv("ANDROID_HOME");
-        if (androidHome == null) androidHome = Sys.getEnv("ANDROID_SDK_ROOT");
-        if (androidHome != null && FileSystem.exists(androidHome)) {
-            return androidHome;
-        }
-        
-        return null;
-    }
-    
-    function getAndroidNdk():String {
-        var home = Sys.getEnv("USERPROFILE");
-        if (home == null) home = Sys.getEnv("HOME");
-        if (home != null) {
-            var configPath = home + "/.beaprc";
-            if (FileSystem.exists(configPath)) {
-                try {
-                    var content = File.getContent(configPath);
-                    var lines = content.split("\n");
-                    for (line in lines) {
-                        if (line.indexOf("android_ndk=") == 0) {
-                            var path = line.substr(12);
-                            path = StringTools.trim(path);
-                            if (FileSystem.exists(path)) {
-                                return path;
-                            }
-                        }
-                    }
-                } catch (e:Dynamic) {}
-            }
-        }
-        
-        var ndkHome = Sys.getEnv("ANDROID_NDK_HOME");
-        if (ndkHome == null) ndkHome = Sys.getEnv("NDK_HOME");
-        if (ndkHome != null && FileSystem.exists(ndkHome)) {
-            return ndkHome;
-        }
-        
-        return null;
-    }
-    
-    function createAndroidProject(config:Config) {
         var platform = getName();
         var androidDir = config.getOutDir(platform) + "/android";
         var packageName = getPackageName(config);
+        var packagePath = StringTools.replace(packageName, ".", "/");
         
+        // 创建目录结构
         var dirs = [
             androidDir,
-            androidDir + "/app",
-            androidDir + "/app/src",
-            androidDir + "/app/src/main",
-            androidDir + "/app/src/main/java",
-            androidDir + "/app/src/main/java/" + StringTools.replace(packageName, ".", "/"),
-            androidDir + "/app/src/main/res",
+            androidDir + "/app/src/main/java/" + packagePath,
+            androidDir + "/app/src/main/cpp",           // C 代码目录
+            androidDir + "/app/src/main/jniLibs/" + DEFAULT_ABI,
             androidDir + "/app/src/main/res/values",
-            androidDir + "/app/src/main/res/layout",
-            androidDir + "/app/src/main/jni",
             androidDir + "/gradle/wrapper"
         ];
         
         for (dir in dirs) {
-            config.createDir(dir);
-        }
-        
-        generateSettingsGradle(config, androidDir);
-        generateBuildGradle(config, androidDir);
-        generateAppBuildGradle(config, androidDir);
-        generateManifest(config, androidDir, packageName);
-        generateMainActivity(config, androidDir, packageName);
-        generateStringsXml(config, androidDir);
-        generateLayoutXml(config, androidDir);
-        generateAndroidMk(config, androidDir);
-        generateApplicationMk(config, androidDir);
-        generateLocalProperties(config, androidDir);
-    }
-
-    function generateLocalProperties(config:Config, androidDir:String) {
-        var sdkPath = getAndroidSdk();
-        if (sdkPath == null) {
-            Console.warning("Android SDK not found, local.properties will not be created automatically.");
-            return;
-        }
-        var sdkPathFormatted = StringTools.replace(sdkPath, "\\", "/");
-        var content = 'sdk.dir=$sdkPathFormatted\n';
-        File.saveContent(androidDir + "/local.properties", content);
-        Console.info("Created local.properties with SDK: " + sdkPath);
-    }
-    
-    function generateSettingsGradle(config:Config, androidDir:String) {
-        var content = 'rootProject.name = "' + config.projectName + '"
-include \':app\'';
-        File.saveContent(androidDir + "/settings.gradle", content);
-    }
-    
-    function generateBuildGradle(config:Config, androidDir:String) {
-        var content = 'buildscript {
-    repositories {
-        google()
-        mavenCentral()
-    }
-    dependencies {
-        classpath \'com.android.tools.build:gradle:7.4.2\'
-    }
-}
-
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-
-task clean(type: Delete) {
-    delete rootProject.buildDir
-}';
-        File.saveContent(androidDir + "/build.gradle", content);
-    }
-    
-function generateAppBuildGradle(config:Config, androidDir:String) {
-    var packageName = getPackageName(config);
-    var ndkPath = getAndroidNdk();
-    var ndkPathFormatted = ndkPath != null ? StringTools.replace(ndkPath, "\\", "/") : "";
-    
-    var content = 'plugins {
-    id \'com.android.application\'
-}
-
-android {
-    namespace "' + packageName + '"
-    compileSdk 33
-    
-    ' + (ndkPathFormatted != "" ? 'ndkPath "' + ndkPathFormatted + '"\n' : '') + '
-    
-    defaultConfig {
-        applicationId "' + packageName + '"
-        minSdk 21
-        targetSdk 33
-        versionCode 1
-        versionName "1.0"
-        
-        externalNativeBuild {
-            ndkBuild {
-                cppFlags "-std=c++11"
-                arguments "APP_SHORT_COMMANDS=true", "LOCAL_SHORT_COMMANDS=true"
+            if (!FileSystem.exists(dir)) {
+                FileSystem.createDirectory(dir);
             }
         }
-
-        ndk {
-            abiFilters "arm64-v8a"
-        }
-    }
-
-    sourceSets {
-        main {
-            jniLibs.srcDirs = ["src/main/libs"]
-        }
-    }
-    
-    buildTypes {
-        release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile(\'proguard-android-optimize.txt\'), \'proguard-rules.pro\'
-        }
-        debug {
-            debuggable true
-        }
-    }
-    
-    externalNativeBuild {
-        ndkBuild {
-            path file("src/main/jni/Android.mk")
-        }
-    }
-}
-
-dependencies {
-    implementation \'androidx.appcompat:appcompat:1.6.1\'
-}';
-    File.saveContent(androidDir + "/app/build.gradle", content);
-}
-    
-function generateManifest(config:Config, androidDir:String, packageName:String) {
-    var content = '<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="' + packageName + '">
-    
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    
-    <application
-        android:allowBackup="true"
-        android:icon="@drawable/ic_launcher"
-        android:label="' + config.projectName + '"
-        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
         
-        <activity
-            android:name=".MainActivity"
-            android:label="' + config.projectName + '"
-            android:configChanges="orientation|keyboardHidden|screenSize"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-    </application>
-</manifest>';
-    File.saveContent(androidDir + "/app/src/main/AndroidManifest.xml", content);
+        // 生成构建文件
+        generateGradleFiles(config, androidDir);
+        generateCMakeLists(config, androidDir);
+        generateManifest(config, androidDir, packageName);
+        generateMainActivity(config, androidDir, packageName);
+        generateNativeBridge(config, androidDir);  // JNI 桥接层
+        generateStrings(config, androidDir);
+    }
+    
+function copyHashLinkLibraries(config:Config):Bool {
+    Console.info("Step 3: Copying HashLink native libraries...");
+
+    var platform = getName();
+    var androidDir = config.getOutDir(platform) + "/android";
+    var jniLibsDir = androidDir + "/app/src/main/jniLibs/" + DEFAULT_ABI;
+
+    var hlLibs = findHashLinkAndroidLibs();
+    if (hlLibs == null) {
+        Console.error("HashLink Android libraries not found!");
+        return false;
+    }
+
+    // 你的实际库文件名
+    var requiredLibs = [
+        "libhl.so",      // HashLink 核心
+        "libfmt.so",     // 格式化
+        "libSDL2.so",    // SDL2（注意大小写！）
+        "libopenal.so",  // 音频
+        "libssl.so",     // SSL（如果需要）
+        "libuv.so"       // UV（如果需要）
+    ];
+
+    var copied = 0;
+    for (lib in requiredLibs) {
+        var srcPath = hlLibs + "/" + lib;
+        var dstPath = jniLibsDir + "/" + lib;
+
+        if (FileSystem.exists(srcPath)) {
+            File.copy(srcPath, dstPath);
+            Console.info("  Copied: " + lib);
+            copied++;
+        } else {
+            Console.warning("  Missing: " + lib);
+        }
+    }
+
+    if (copied < 4) {  // 至少需要核心库
+        Console.error("Too few libraries copied!");
+        return false;
+    }
+
+    return true;
 }
     
-function generateMainActivity(config:Config, androidDir:String, packageName:String) {
-    Console.info("Generating MainActivity and HashLinkActivity...");
-    
-    // 1. 创建 org/haxe 目录
-    var hashLinkDir = androidDir + "/app/src/main/java/org/haxe";
-    if (!FileSystem.exists(hashLinkDir)) {
-        FileSystem.createDirectory(hashLinkDir);
-        Console.info("Created directory: " + hashLinkDir);
-    }
-    
-    // 2. 创建 HashLinkActivity.java
-    var hashLinkActivityCode = '
-package org.haxe;
-
-import android.app.Activity;
-import android.os.Bundle;
-import android.content.Context;
-import android.util.Log;
-
-public class HashLinkActivity extends Activity {
-    private static final String TAG = "HashLink";
-    private static HashLinkActivity instance;
-    
-    static {
-        try {
-            System.loadLibrary("hl");
-            System.loadLibrary("main");
-            Log.i(TAG, "Libraries loaded successfully");
-        } catch (UnsatisfiedLinkError e) {
-            Log.e(TAG, "Failed to load libraries: " + e.getMessage());
+    function copyResources(config:Config):Void {
+        Console.info("Step 4: Copying resources...");
+        
+        var platform = getName();
+        var assetsDir = config.getOutDir(platform) + "/android/app/src/main/assets";
+        
+        if (!FileSystem.exists(assetsDir)) {
+            FileSystem.createDirectory(assetsDir);
+        }
+        
+        // 复制 res 目录
+        if (FileSystem.exists("res")) {
+            copyDirectory("res", assetsDir + "/res");
+        }
+        
+        // 复制其他资源
+        if (FileSystem.exists("assets")) {
+            copyDirectory("assets", assetsDir);
         }
     }
     
-    public static Context getContext() {
-        return instance;
+function buildWithGradle(config:Config):Bool {
+    Console.info("Step 5: Building APK with Gradle...");
+
+    var platform = getName();
+    var androidDir = config.getOutDir(platform) + "/android";
+    trace(androidDir);
+    var currentDir = Sys.getCwd();
+
+    if (!createLocalProperties(androidDir)) {
+        return false;
     }
+
+    // 创建 Gradle Wrapper（下载 wrapper.jar）
+    if (!createGradleWrapper(androidDir)) {
+        Console.error("Failed to create Gradle Wrapper!");
+        return false;
+    }
+
+    // 验证 wrapper 是否存在
+    var wrapperJar = androidDir + "/gradle/wrapper/gradle-wrapper.jar";
+    if (!FileSystem.exists(wrapperJar)) {
+        Console.error("Gradle Wrapper JAR not found after creation!");
+        return false;
+    }
+
+    // 切换到 Android 目录并构建
+    Sys.setCwd(androidDir);
+
+    var gradleCmd = #if windows "gradlew.bat" #else "./gradlew" #end;
     
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        instance = this;
-        Log.i(TAG, "HashLinkActivity onCreate - HashLink should auto-start via JNI_OnLoad");
-        
-        android.view.SurfaceView surfaceView = new android.view.SurfaceView(this);
-        setContentView(surfaceView);
+    Console.info("Running: " + gradleCmd + " assembleDebug");
+    var result = Sys.command(gradleCmd, ["assembleDebug", "--no-daemon"]);
+
+    Sys.setCwd(currentDir);
+
+    if (result != 0) {
+        Console.error("Gradle build failed! Exit code: " + result);
+        return false;
     }
-    
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        instance = null;
-        Log.i(TAG, "HashLinkActivity onDestroy");
+
+    // 复制 APK 到输出目录
+    var apkSource = androidDir + "/app/build/outputs/apk/debug/app-debug.apk";
+    var apkTarget = config.getOutputPath(platform, ".apk");
+
+    if (FileSystem.exists(apkSource)) {
+        File.copy(apkSource, apkTarget);
+        Console.success("APK built: " + apkTarget);
+        return true;
     }
+
+    Console.error("APK not found after build at: " + apkSource);
+    return false;
 }
-';
-    var hashLinkFile = hashLinkDir + "/HashLinkActivity.java";
-    File.saveContent(hashLinkFile, hashLinkActivityCode);
-    Console.info("Created: " + hashLinkFile);
     
-    // 3. 验证 HashLinkActivity.java 是否真的存在
-    if (FileSystem.exists(hashLinkFile)) {
-        Console.info("[OK] HashLinkActivity.java exists, size: " + FileSystem.stat(hashLinkFile).size + " bytes");
-    } else {
-        Console.error("[FAIL] HashLinkActivity.java was not created!");
-        return;
+    // ==================== 文件生成器 ====================
+    
+    function generateGradleFiles(config:Config, androidDir:String):Void {
+        // settings.gradle
+        File.saveContent(androidDir + "/settings.gradle", 
+            'rootProject.name = "${config.projectName}"\ninclude ":app"\n'
+        );
+        
+        // build.gradle (项目级)
+        File.saveContent(androidDir + "/build.gradle", 
+            'buildscript {\n' +
+            '    repositories { google(); mavenCentral() }\n' +
+            '    dependencies { classpath "com.android.tools.build:gradle:8.1.4" }\n' +
+            '}\n\n' +
+            'allprojects {\n' +
+            '    repositories { google(); mavenCentral() }\n' +
+            '}\n'
+        );
+        
+        // app/build.gradle
+        var packageName = getPackageName(config);
+        var appGradle = 
+            'plugins { id "com.android.application" }\n\n' +
+            'android {\n' +
+            '    namespace "${packageName}"\n' +
+            '    compileSdk 34\n\n' +
+            '    defaultConfig {\n' +
+            '        applicationId "${packageName}"\n' +
+            '        minSdk 24\n' +
+            '        targetSdk 34\n' +
+            '        versionCode 1\n' +
+            '        versionName "1.0"\n\n' +
+            '        ndk { abiFilters "${DEFAULT_ABI}" }\n' +
+            '    }\n\n' +
+            '    externalNativeBuild {\n' +
+            '        cmake {\n' +
+            '            path "src/main/cpp/CMakeLists.txt"\n' +
+            '            version "3.22.1"\n' +
+            '        }\n' +
+            '    }\n\n' +
+            '    buildTypes {\n' +
+            '        release { minifyEnabled false }\n' +
+            '        debug { debuggable true }\n' +
+            '    }\n\n' +
+            '    sourceSets {\n' +
+            '        main { jniLibs.srcDirs = ["src/main/jniLibs"] }\n' +
+            '    }\n' +
+            '}\n\n' +
+            'dependencies {\n' +
+            '    implementation "androidx.appcompat:appcompat:1.6.1"\n' +
+            '}';
+        
+        File.saveContent(androidDir + "/app/build.gradle", appGradle);
+        
+        // gradle.properties
+        File.saveContent(androidDir + "/gradle.properties", 
+            'android.useAndroidX=true\n' +
+            'android.enableJetifier=true\n' +
+            'org.gradle.jvmargs=-Xmx2048m\n'
+        );
     }
     
-    // 4. 创建 MainActivity
-    var packagePath = StringTools.replace(packageName, ".", "/");
-    var mainDir = androidDir + "/app/src/main/java/" + packagePath;
-    if (!FileSystem.exists(mainDir)) {
-        FileSystem.createDirectory(mainDir);
-        Console.info("Created directory: " + mainDir);
+    function generateCMakeLists(config:Config, androidDir:String):Void {
+        var cppDir = androidDir + "/app/src/main/cpp";
+        var platform = getName();
+        var outDir = config.getOutDir(platform);
+        
+        var cmakeContent = 
+            'cmake_minimum_required(VERSION 3.22.1)\n' +
+            'project(${config.projectName} C)\n\n' +
+            'set(CMAKE_C_STANDARD 11)\n' +
+            'set(CMAKE_C_STANDARD_REQUIRED ON)\n\n' +
+            '# 关闭 C++ 扩展（纯 C 项目）\n' +
+            'set(CMAKE_CXX_EXTENSIONS OFF)\n\n' +
+            '# 源文件：主 C 文件 + 生成的 C 文件目录\n' +
+            'set(HL_SRC\n' +
+            '    ${outDir}/${config.projectName}.c\n' +
+            '    ${cppDir}/native_bridge.c\n' +  // JNI 桥接
+            ')\n\n' +
+            '# 添加库\n' +
+            'add_library(${config.projectName} SHARED $${HL_SRC})\n\n' +
+            '# 包含目录\n' +
+            'target_include_directories(${config.projectName} PRIVATE\n' +
+            '    ${cppDir}\n' +
+            '    ${cppDir}/hashlink\n' +
+            ')\n\n' +
+            '# 预处理器定义\n' +
+            'target_compile_definitions(${config.projectName} PRIVATE\n' +
+            '    -D_GNU_SOURCE\n' +
+            '    -D__ANDROID__\n' +
+            '    -DHL_ANDROID\n' +
+            '    -DPCRE2_CODE_UNIT_WIDTH=16\n' +
+            ')\n\n' +
+            '# 查找系统库\n' +
+            'find_library(LOG_LIB log)\n' +
+            'find_library(ANDROID_LIB android)\n' +
+            'find_library(EGL_LIB EGL)\n' +
+            'find_library(GLES_LIB GLESv2)\n' +
+            'find_library(OPENSL_LIB OpenSLES)\n\n' +
+            '# 导入 HashLink 库\n' +
+            'add_library(hl SHARED IMPORTED)\n' +
+            'set_target_properties(hl PROPERTIES\n' +
+            '    IMPORTED_LOCATION ${cppDir}/../jniLibs/$${ANDROID_ABI}/libhl.so)\n\n' +
+            'add_library(sdl SHARED IMPORTED)\n' +
+            'set_target_properties(sdl PROPERTIES\n' +
+            '    IMPORTED_LOCATION ${cppDir}/../jniLibs/$${ANDROID_ABI}/libsdl.so)\n\n' +
+            'add_library(openal SHARED IMPORTED)\n' +
+            'set_target_properties(openal PROPERTIES\n' +
+            '    IMPORTED_LOCATION ${cppDir}/../jniLibs/$${ANDROID_ABI}/libopenal.so)\n\n' +
+            'add_library(fmt SHARED IMPORTED)\n' +
+            'set_target_properties(fmt PROPERTIES\n' +
+            '    IMPORTED_LOCATION ${cppDir}/../jniLibs/$${ANDROID_ABI}/libfmt.so)\n\n' +
+            '# 链接\n' +
+            'target_link_libraries(${config.projectName}\n' +
+            '    hl sdl openal fmt\n' +
+            '    $${LOG_LIB} $${ANDROID_LIB} $${EGL_LIB} $${GLES_LIB} $${OPENSL_LIB}\n' +
+            '    m dl\n' +
+            ')';
+        
+        File.saveContent(cppDir + "/CMakeLists.txt", cmakeContent);
     }
     
-    var mainActivityCode = '
-package ' + packageName + ';
-
-import org.haxe.HashLinkActivity;
-import android.util.Log;
-
-public class MainActivity extends HashLinkActivity {
-    private static final String TAG = "MainActivity";
+    function generateManifest(config:Config, androidDir:String, packageName:String):Void {
+        var manifest = 
+            '<?xml version="1.0" encoding="utf-8"?>\n' +
+            '<manifest xmlns:android="http://schemas.android.com/apk/res/android"\n' +
+            '    package="${packageName}">\n\n' +
+            '    <uses-feature android:glEsVersion="0x00020000" android:required="true" />\n\n' +
+            '    <uses-permission android:name="android.permission.INTERNET" />\n' +
+            '    <uses-permission android:name="android.permission.WAKE_LOCK" />\n\n' +
+            '    <application\n' +
+            '        android:allowBackup="true"\n' +
+            '        android:icon="@mipmap/ic_launcher"\n' +
+            '        android:label="@string/app_name"\n' +
+            '        android:theme="@style/AppTheme"\n' +
+            '        android:hardwareAccelerated="true"\n' +
+            '        android:extractNativeLibs="true">\n\n' +
+            '        <activity\n' +
+            '            android:name=".MainActivity"\n' +
+            '            android:exported="true"\n' +
+            '            android:configChanges="orientation|screenSize|smallestScreenSize|keyboardHidden"\n' +
+            '            android:launchMode="singleTask"\n' +
+            '            android:screenOrientation="landscape">\n' +
+            '            <intent-filter>\n' +
+            '                <action android:name="android.intent.action.MAIN" />\n' +
+            '                <category android:name="android.intent.category.LAUNCHER" />\n' +
+            '            </intent-filter>\n' +
+            '        </activity>\n' +
+            '    </application>\n' +
+            '</manifest>';
+        
+        File.saveContent(androidDir + "/app/src/main/AndroidManifest.xml", manifest);
+    }
     
-    static {
-        try {
-            // main库已经在HashLinkActivity中加载，这里不需要重复
-            Log.i(TAG, "MainActivity static initializer");
-        } catch (UnsatisfiedLinkError e) {
-            Log.e(TAG, "Failed: " + e.getMessage());
+    function generateMainActivity(config:Config, androidDir:String, packageName:String):Void {
+        var packagePath = StringTools.replace(packageName, ".", "/");
+        var activityDir = androidDir + "/app/src/main/java/" + packagePath;
+        
+        // MainActivity.java - 加载 native 库并启动
+        var activityCode = 
+            'package ${packageName};\n\n' +
+            'import android.app.Activity;\n' +
+            'import android.os.Bundle;\n' +
+            'import android.util.Log;\n' +
+            'import android.view.SurfaceView;\n' +
+            'import android.view.SurfaceHolder;\n' +
+            'import android.widget.FrameLayout;\n\n' +
+            'public class MainActivity extends Activity {\n' +
+            '    private static final String TAG = "Heaps";\n' +
+            '    private SurfaceView surfaceView;\n\n' +
+            '    // 加载 native 库\n' +
+            '    static {\n' +
+            '        try {\n' +
+            '            System.loadLibrary("${config.projectName}");\n' +
+            '            Log.i(TAG, "Native library loaded successfully");\n' +
+            '        } catch (UnsatisfiedLinkError e) {\n' +
+            '            Log.e(TAG, "Failed to load native library: " + e.getMessage());\n' +
+            '        }\n' +
+            '    }\n\n' +
+            '    @Override\n' +
+            '    protected void onCreate(Bundle savedInstanceState) {\n' +
+            '        super.onCreate(savedInstanceState);\n' +
+            '        Log.i(TAG, "onCreate");\n\n' +
+            '        // 创建 SurfaceView 用于渲染\n' +
+            '        surfaceView = new SurfaceView(this);\n' +
+            '        surfaceView.getHolder().addCallback(new SurfaceHolder.Callback() {\n' +
+            '            @Override\n' +
+            '            public void surfaceCreated(SurfaceHolder holder) {\n' +
+            '                Log.i(TAG, "Surface created");\n' +
+            '                nativeInit(getAssets().getAbsolutePath());\n' +
+            '            }\n\n' +
+            '            @Override\n' +
+            '            public void surfaceChanged(SurfaceHolder holder, int format, int w, int h) {\n' +
+            '                Log.i(TAG, "Surface changed: " + w + "x" + h);\n' +
+            '                nativeResize(w, h);\n' +
+            '            }\n\n' +
+            '            @Override\n' +
+            '            public void surfaceDestroyed(SurfaceHolder holder) {\n' +
+            '                Log.i(TAG, "Surface destroyed");\n' +
+            '                nativePause();\n' +
+            '            }\n' +
+            '        });\n\n' +
+            '        setContentView(surfaceView);\n' +
+            '    }\n\n' +
+            '    @Override\n' +
+            '    protected void onPause() {\n' +
+            '        super.onPause();\n' +
+            '        nativePause();\n' +
+            '    }\n\n' +
+            '    @Override\n' +
+            '    protected void onResume() {\n' +
+            '        super.onResume();\n' +
+            '        nativeResume();\n' +
+            '    }\n\n' +
+            '    @Override\n' +
+            '    protected void onDestroy() {\n' +
+            '        super.onDestroy();\n' +
+            '        nativeQuit();\n' +
+            '    }\n\n' +
+            '    // Native methods\n' +
+            '    private static native void nativeInit(String assetPath);\n' +
+            '    private static native void nativeResize(int width, int height);\n' +
+            '    private static native void nativePause();\n' +
+            '    private static native void nativeResume();\n' +
+            '    private static native void nativeQuit();\n' +
+            '}';
+        
+        File.saveContent(activityDir + "/MainActivity.java", activityCode);
+    }
+    
+    function generateNativeBridge(config:Config, androidDir:String):Void {
+        var cppDir = androidDir + "/app/src/main/cpp";
+        
+        // native_bridge.c - JNI 桥接层（纯 C）
+        var bridgeCode = 
+            '#include <jni.h>\n' +
+            '#include <android/log.h>\n' +
+            '#include <stdlib.h>\n' +
+            '#include <string.h>\n' +
+            '#include <hl.h>\n\n' +
+            '#define LOG_TAG "Heaps"\n' +
+            '#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)\n' +
+            '#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)\n\n' +
+            '// Haxe 入口函数（由 Haxe 生成）\n' +
+            'extern void _main();\n\n' +
+            '// 全局状态\n' +
+            'static int g_initialized = 0;\n' +
+            'static char g_assetPath[512] = {0};\n\n' +
+            'JNIEXPORT void JNICALL\n' +
+            'Java_${StringTools.replace(getPackageName(config), ".", "_")}_MainActivity_nativeInit(\n' +
+            '    JNIEnv *env, jclass clazz, jstring assetPath) {\n\n' +
+            '    LOGI("nativeInit called");\n\n' +
+            '    if (assetPath) {\n' +
+            '        const char *path = (*env)->GetStringUTFChars(env, assetPath, NULL);\n' +
+            '        strncpy(g_assetPath, path, sizeof(g_assetPath) - 1);\n' +
+            '        (*env)->ReleaseStringUTFChars(env, assetPath, path);\n' +
+            '        LOGI("Asset path: %s", g_assetPath);\n' +
+            '    }\n\n' +
+            '    if (!g_initialized) {\n' +
+            '        LOGI("Initializing HashLink runtime...");\n' +
+            '        hl_global_init();\n' +
+            '        hl_sys_init(NULL, 0, NULL);\n' +
+            '        g_initialized = 1;\n' +
+            '        LOGI("HashLink initialized, calling _main()");\n' +
+            '        _main();\n' +
+            '    } else {\n' +
+            '        LOGI("Already initialized");\n' +
+            '    }\n' +
+            '}\n\n' +
+            'JNIEXPORT void JNICALL\n' +
+            'Java_${StringTools.replace(getPackageName(config), ".", "_")}_MainActivity_nativeResize(\n' +
+            '    JNIEnv *env, jclass clazz, jint width, jint height) {\n\n' +
+            '    LOGI("nativeResize: %dx%d", width, height);\n' +
+            '    // TODO: 通知 Haxe 端窗口大小变化\n' +
+            '}\n\n' +
+            'JNIEXPORT void JNICALL\n' +
+            'Java_${StringTools.replace(getPackageName(config), ".", "_")}_MainActivity_nativePause(\n' +
+            '    JNIEnv *env, jclass clazz) {\n\n' +
+            '    LOGI("nativePause");\n' +
+            '    // TODO: 暂停游戏循环\n' +
+            '}\n\n' +
+            'JNIEXPORT void JNICALL\n' +
+            'Java_${StringTools.replace(getPackageName(config), ".", "_")}_MainActivity_nativeResume(\n' +
+            '    JNIEnv *env, jclass clazz) {\n\n' +
+            '    LOGI("nativeResume");\n' +
+            '    // TODO: 恢复游戏循环\n' +
+            '}\n\n' +
+            'JNIEXPORT void JNICALL\n' +
+            'Java_${StringTools.replace(getPackageName(config), ".", "_")}_MainActivity_nativeQuit(\n' +
+            '    JNIEnv *env, jclass clazz) {\n\n' +
+            '    LOGI("nativeQuit");\n' +
+            '    if (g_initialized) {\n' +
+            '        hl_global_free();\n' +
+            '        g_initialized = 0;\n' +
+            '    }\n' +
+            '}';
+        
+        File.saveContent(cppDir + "/native_bridge.c", bridgeCode);
+        
+        // 创建空的 hashlink 目录用于头文件
+        if (!FileSystem.exists(cppDir + "/hashlink")) {
+            FileSystem.createDirectory(cppDir + "/hashlink");
         }
     }
     
-    @Override
-    protected void onCreate(android.os.Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        Log.i(TAG, "MainActivity onCreate");
-    }
-}
-';
-    var mainFile = mainDir + "/MainActivity.java";
-    File.saveContent(mainFile, mainActivityCode);
-    Console.info("Created: " + mainFile);
-    
-    // 5. 验证 MainActivity.java 是否真的存在
-    if (FileSystem.exists(mainFile)) {
-        Console.info("[OK] MainActivity.java exists, size: " + FileSystem.stat(mainFile).size + " bytes");
-    } else {
-        Console.error("[FAIL] MainActivity.java was not created!");
-        return;
-    }
-    
-    // 6. 列出所有生成的 Java 文件
-    Console.info("Java source files in project:");
-    var javaDir = androidDir + "/app/src/main/java";
-    if (FileSystem.exists(javaDir)) {
-        listJavaFiles(javaDir, "");
-    }
-}
-
-function listJavaFiles(dir:String, indent:String) {
-    var files = FileSystem.readDirectory(dir);
-    for (file in files) {
-        var path = dir + "/" + file;
-        if (FileSystem.isDirectory(path)) {
-            listJavaFiles(path, indent + "  ");
-        } else if (StringTools.endsWith(file, ".java")) {
-            Console.info(indent + "- " + path);
-        }
-    }
-}
-
-    
-    function generateStringsXml(config:Config, androidDir:String) {
-        var resDir = androidDir + "/app/src/main/res/values";
-        config.createDir(resDir);
-        var content = '<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">' + config.projectName + '</string>
-</resources>';
-        File.saveContent(resDir + "/strings.xml", content);
-    }
-    
-    function generateLayoutXml(config:Config, androidDir:String) {
-        var layoutDir = androidDir + "/app/src/main/res/layout";
-        config.createDir(layoutDir);
-        var content = '<?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent">
-    
-    <SurfaceView
-        android:id="@+id/surfaceView"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+    function generateStrings(config:Config, androidDir:String):Void {
+        var strings = 
+            '<resources>\n' +
+            '    <string name="app_name">${config.projectName}</string>\n' +
+            '</resources>';
+        File.saveContent(androidDir + "/app/src/main/res/values/strings.xml", strings);
         
-</FrameLayout>';
-        File.saveContent(layoutDir + "/activity_main.xml", content);
+        // 简单的主题
+        var styles = 
+            '<resources>\n' +
+            '    <style name="AppTheme" parent="android:Theme.NoTitleBar.Fullscreen">\n' +
+            '        <item name="android:windowFullscreen">true</item>\n' +
+            '        <item name="android:windowNoTitle">true</item>\n' +
+            '    </style>\n' +
+            '</resources>';
+        File.saveContent(androidDir + "/app/src/main/res/values/styles.xml", styles);
     }
     
-    function generateAndroidMk(config:Config, androidDir:String) {
-        var projectName = config.projectName;
-        var jniDir = androidDir + "/app/src/main/jni";
-        config.createDir(jniDir);
-        
-        // 只需要主 C 文件
-        var srcFiles = [projectName + ".c"];
-        var srcList = "";
-        for (src in srcFiles) {
-            srcList += ' \\\n    ' + src;
-        }
-        
-        var content = 'LOCAL_PATH := $(call my-dir)
-
-# 主模块
-include $(CLEAR_VARS)
-LOCAL_MODULE := main
-LOCAL_SRC_FILES :=' + srcList + '
-
-LOCAL_C_INCLUDES += $(LOCAL_PATH)
-LOCAL_C_INCLUDES += $(LOCAL_PATH)/hashlink
-
-# 编译选项
-LOCAL_CFLAGS += -std=gnu11 -DUSTR(str)=str -DPCRE2_CODE_UNIT_WIDTH=16
-LOCAL_CPPFLAGS += -std=c++11 -frtti -fexceptions
-
-LOCAL_CFLAGS += -D_GNU_SOURCE -D__ANDROID__
-LOCAL_CFLAGS += -DSUPPORT_JIT=0
-
-LOCAL_LDLIBS := -llog -landroid -lEGL -lGLESv1_CM -lGLESv2 -lOpenSLES -lm
-LOCAL_LDFLAGS += -L$(LOCAL_PATH)/../libs/$(TARGET_ARCH_ABI)
-LOCAL_LDFLAGS += -lhl -lSDL2 -lsdl -lopenal -lfmt -luv -lui -lheaps
-
-# 启用短命令
-LOCAL_SHORT_COMMANDS := true
-
-include $(BUILD_SHARED_LIBRARY)';
-        
-        File.saveContent(jniDir + "/Android.mk", content);
-    }
-
-    function getCurrentAbi():String {
-        var abi = Sys.getEnv("ANDROID_ABI");
-        if (abi != null && abi != "") return abi;
-        return "arm64-v8a";
-    }
-    
-    function generateApplicationMk(config:Config, androidDir:String) {
-        var jniDir = androidDir + "/app/src/main/jni";
-        config.createDir(jniDir);
-        
-        var content = 'APP_ABI := arm64-v8a
-APP_PLATFORM := android-21
-APP_STL := c++_shared
-APP_SHORT_COMMANDS := true
-APP_ALLOW_MISSING_DEPENDENCIES := true';
-        File.saveContent(jniDir + "/Application.mk", content);
-    }
+    // ==================== 辅助方法 ====================
     
     function getBuildHxml(config:Config, platform:String):String {
         var outDir = config.getOutDir(platform);
         var cFile = outDir + "/" + config.projectName + ".c";
         
+        // 检查用户自定义 hxml
         if (FileSystem.exists("build-android.hxml")) {
-            Console.info(Lang.get("using_user_config"));
+            Console.info("Using user's build-android.hxml");
             try {
                 var content = File.getContent("build-android.hxml");
+                // 确保输出路径正确
+                if (content.indexOf("-hl") == -1) {
+                    content += '\n-hl ${cFile}\n';
+                }
                 return content;
             } catch (e:Dynamic) {
-                Console.warning(Lang.get("config_read_error"));
+                Console.warning("Failed to read build-android.hxml");
             }
         }
         
-        Console.info(Lang.get("using_default_config"));
-        return '
--cp src
--main Main
--lib heaps
--lib format
--lib hlsdl
--D android
--D hl_native
--D HXCPP_CPP11
--D sdl
--hl ' + cFile + '
-';
+        // 默认配置
+        return 
+            '-cp src\n' +
+            '-main Main\n' +
+            '-lib heaps\n' +
+            '-lib format\n' +
+            '-lib hlsdl\n' +
+            '-D android\n' +
+            '-D mobile\n' +
+            '-D hl_ver=1.14\n' +
+            '-D windowTitle=${config.projectName}\n' +
+            '-D windowSize=1280x720\n' +
+            '-D resourcesPath=res\n' +
+            '-hl ${cFile}\n';
     }
     
-    function copyCFiles(config:Config) {
-        var platform = getName();
-        var outDir = config.getOutDir(platform);
-        var cFile = outDir + "/" + config.projectName + ".c";
-        var jniDir = outDir + "/android/app/src/main/jni";
-        var targetFile = jniDir + "/" + config.projectName + ".c";
-        
-        if (!FileSystem.exists(jniDir)) {
-            FileSystem.createDirectory(jniDir);
+function createLocalProperties(androidDir:String):Bool {
+    var sdkPath = getAndroidSdk();
+    var ndkPath = getAndroidNdk();
+    
+    if (sdkPath == null) {
+        sdkPath = SetupCommand.getConfigValue("android_sdk");
+    }
+    if (ndkPath == null) {
+        ndkPath = SetupCommand.getConfigValue("android_ndk");
+    }
+    
+    if (sdkPath == null || sdkPath == "") {
+        Console.error("Android SDK not found!");
+        Console.info("Please run: beap setup android");
+        return false;
+    }
+    
+    var sdkPathFormatted = StringTools.replace(sdkPath, "\\", "/");
+    
+    var props = 'sdk.dir=${sdkPathFormatted}\n';
+    
+    if (ndkPath != null && ndkPath != "") {
+        var ndkPathFormatted = StringTools.replace(ndkPath, "\\", "/");
+        props += 'ndk.dir=${ndkPathFormatted}\n';
+    }
+    
+    File.saveContent(androidDir + "/local.properties", props);
+    Console.info("Created local.properties with SDK: " + sdkPathFormatted);
+    return true;
+}
+    
+function createGradleWrapper(androidDir:String):Bool {
+    var wrapperDir = androidDir + "/gradle/wrapper";
+    
+    // 确保目录存在！
+    if (!FileSystem.exists(wrapperDir)) {
+        FileSystem.createDirectory(wrapperDir);
+        Console.info("Created directory: " + wrapperDir);
+    }
+    
+    // gradle-wrapper.properties
+    var props = 
+        'distributionBase=GRADLE_USER_HOME\n' +
+        'distributionPath=wrapper/dists\n' +
+        'distributionUrl=https\\://services.gradle.org/distributions/gradle-8.7-bin.zip\n' +
+        'networkTimeout=10000\n' +
+        'zipStoreBase=GRADLE_USER_HOME\n' +
+        'zipStorePath=wrapper/dists\n';
+    
+    File.saveContent(wrapperDir + "/gradle-wrapper.properties", props);
+    
+    var wrapperJar = wrapperDir + "/gradle-wrapper.jar";
+    if (!FileSystem.exists(wrapperJar)) {
+        Console.info("Downloading Gradle Wrapper JAR...");
+        var downloaded = downloadFile("https://raw.githubusercontent.com/gradle/gradle/v8.7.0/gradle/wrapper/gradle-wrapper.jar", wrapperJar);
+        if (!downloaded) {
+            Console.error("Failed to download gradle-wrapper.jar!");
+            return false;
+        }
+    }
+    
+    // 检查是否真的存在
+    if (!FileSystem.exists(wrapperJar)) {
+        Console.error("gradle-wrapper.jar still not found after download attempt!");
+        return false;
+    }
+    
+    // gradlew.bat
+    var batContent = 
+        '@echo off\n' +
+        'setlocal\n\n' +
+        'set DIRNAME=%~dp0\n' +
+        'if "%DIRNAME%"=="" set DIRNAME=.\n' +
+        'set APP_BASE_NAME=%~n0\n' +
+        'set APP_HOME=%DIRNAME%\n\n' +
+        '@rem Resolve any "." and ".." in APP_HOME\n' +
+        'for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi\n\n' +
+        '@rem Add default JVM options\n' +
+        'set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"\n\n' +
+        '@rem Find java.exe\n' +
+        'if defined JAVA_HOME goto findJavaFromJavaHome\n\n' +
+        'set JAVA_EXE=java.exe\n' +
+        '%JAVA_EXE% -version >NUL 2>&1\n' +
+        'if %ERRORLEVEL% equ 0 goto execute\n\n' +
+        'echo ERROR: JAVA_HOME is not set and no java command could be found in your PATH.\n' +
+        'goto fail\n\n' +
+        ':findJavaFromJavaHome\n' +
+        'set JAVA_HOME=%JAVA_HOME:"=%\n' +
+        'set JAVA_EXE=%JAVA_HOME%/bin/java.exe\n\n' +
+        'if exist "%JAVA_EXE%" goto execute\n\n' +
+        'echo ERROR: JAVA_HOME is set to an invalid directory: %JAVA_HOME%\n' +
+        'goto fail\n\n' +
+        ':execute\n' +
+        '@rem Setup the command line\n' +
+        'set CLASSPATH=%APP_HOME%\\gradle\\wrapper\\gradle-wrapper.jar\n\n' +
+        '"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %GRADLE_OPTS% "-Dorg.gradle.appname=%APP_BASE_NAME%" -classpath "%CLASSPATH%" org.gradle.wrapper.GradleWrapperMain %*\n\n' +
+        ':fail\n' +
+        'exit /b 1\n';
+    
+    File.saveContent(androidDir + "/gradlew.bat", batContent);
+    
+    return true;
+}
+
+function downloadFile(url:String, destPath:String):Bool {
+    try {
+        #if windows
+        Console.info("Downloading with PowerShell...");
+        var psCmd = 'Invoke-WebRequest -Uri "' + url + '" -OutFile "' + destPath + '" -UseBasicParsing';
+        var result = Sys.command("powershell", ["-ExecutionPolicy", "Bypass", "-Command", psCmd]);
+        if (result == 0 && FileSystem.exists(destPath)) {
+            Console.success("Downloaded: " + destPath);
+            return true;
         }
         
-        // 复制主 C 文件
-        if (FileSystem.exists(cFile)) {
-            File.copy(cFile, targetFile);
-            Console.info("Copied C file: " + cFile + " -> " + targetFile);
-        } else {
-            Console.error("C file not found: " + cFile);
-            return;
+        // 备用：使用 curl（Windows 10+ 自带）
+        if (!FileSystem.exists(destPath)) {
+            Console.info("Trying curl...");
+            result = Sys.command("curl", ["-L", "-o", destPath, url]);
+            if (result == 0 && FileSystem.exists(destPath)) {
+                Console.success("Downloaded: " + destPath);
+                return true;
+            }
         }
         
-        // 复制 outDir 中需要的目录到 jni 目录
-        var neededDirs = ["hl", "hxd", "sdl", "hxsl", "h2d", "h3d", "haxe", "sys", "_std", "_Xml", "format"];
-        for (dirName in neededDirs) {
-            var srcDir = outDir + "/" + dirName;
-            var dstDir = jniDir + "/" + dirName;
-            if (FileSystem.exists(srcDir) && FileSystem.isDirectory(srcDir)) {
-                if (FileSystem.exists(dstDir)) {
-                    try { FileSystem.deleteDirectory(dstDir); } catch (e:Dynamic) {}
+        // 备用：使用 certutil
+        if (!FileSystem.exists(destPath)) {
+            Console.info("Trying certutil...");
+            result = Sys.command("certutil", ["-urlcache", "-split", "-f", url, destPath]);
+            if (result == 0 && FileSystem.exists(destPath)) {
+                // certutil 会生成临时文件，需要清理
+                var tempFile = destPath + ".";
+                if (FileSystem.exists(tempFile)) {
+                    try { FileSystem.deleteFile(tempFile); } catch (e:Dynamic) {}
                 }
-                copyDirectory(srcDir, dstDir, config);
-                Console.info("Copied directory: " + dirName);
+                Console.success("Downloaded: " + destPath);
+                return true;
             }
         }
-        
-        // 复制 BEAP 公共头文件
-        var beapHome = getBeapHome();
-        var beapIncludeDir = beapHome + "/include/hashlink";
-        if (FileSystem.exists(beapIncludeDir)) {
-            var targetIncludeDir = jniDir + "/hashlink";
-            if (!FileSystem.exists(targetIncludeDir)) {
-                FileSystem.createDirectory(targetIncludeDir);
-            }
-            copyDirectory(beapIncludeDir, targetIncludeDir, config);
-            Console.info("Copied HashLink headers from BEAP include");
+        #else
+        // Unix: 使用 curl 或 wget
+        var result = Sys.command("curl", ["-L", "-o", destPath, url]);
+        if (result == 0 && FileSystem.exists(destPath)) {
+            return true;
         }
         
-        // 复制预编译库
-        copyPrecompiledLibs(config, jniDir);
+        if (!FileSystem.exists(destPath)) {
+            result = Sys.command("wget", ["-O", destPath, url]);
+            if (result == 0 && FileSystem.exists(destPath)) {
+                return true;
+            }
+        }
+        #end
+        
+        Console.error("All download methods failed for: " + url);
+        return false;
+    } catch (e:Dynamic) {
+        Console.error("Download error: " + e);
+        return false;
     }
+}
     
-    function copyPrecompiledLibs(config:Config, jniDir:String) {
-        var beapHome = getBeapHome();
-        var precompiledLibsDir = beapHome + "/tools/android/libs";
+function findHashLinkAndroidLibs():String {
+    // 1. 检查 beap 工具目录（你的实际路径）
+    var beapHome = getBeapHome();
+    Console.info("Checking Beap tools directory: " + beapHome);
+    
+    if (beapHome != "") {
+        // 你的实际路径：tools/android/libs/arm64-v8a/
+        var libPath = beapHome + "/tools/android/libs/" + DEFAULT_ABI;
+        Console.info("Checking path: " + libPath);
         
-        if (FileSystem.exists(precompiledLibsDir)) {
-            var targetLibsDir = jniDir + "/../libs";
-            if (!FileSystem.exists(targetLibsDir)) {
-                FileSystem.createDirectory(targetLibsDir);
-            }
-            copyDirectory(precompiledLibsDir, targetLibsDir, config);
-            Console.info("Copied precompiled Android libraries from BEAP tools");
-            
-            // 验证复制结果
-            var archDir = targetLibsDir + "/arm64-v8a";
-            if (FileSystem.exists(archDir)) {
-                var files = FileSystem.readDirectory(archDir);
-                Console.info("Libraries in arm64-v8a: " + files.join(", "));
-            }
+        if (FileSystem.exists(libPath)) {
+            Console.success("Found HashLink libs in beap tools: " + libPath);
+            return libPath;
         } else {
-            Console.error("Precompiled Android libraries not found at: " + precompiledLibsDir);
-            Console.info("Please place libhl.so, libSDL2.so, libopenal.so in: " + precompiledLibsDir + "/arm64-v8a/");
+            Console.warning("Path not found: " + libPath);
         }
     }
     
-    function copyDirectory(src:String, dst:String, config:Config, ?skipDirs:Array<String>) {
-        if (!FileSystem.exists(src)) return;
-        if (!FileSystem.exists(dst)) {
-            FileSystem.createDirectory(dst);
+    // 2. 检查环境变量 HASHLINK
+    var hlPath = Sys.getEnv("HASHLINK");
+    if (hlPath != null) {
+        var libPath = hlPath + "/android/" + DEFAULT_ABI;
+        if (FileSystem.exists(libPath)) {
+            Console.info("Found HashLink libs in HASHLINK env: " + libPath);
+            return libPath;
         }
+    }
+    
+    // 3. 检查 haxelib hashlink
+    try {
+        var proc = new Process("haxelib", ["path", "hashlink"]);
+        var output = proc.stdout.readAll().toString();
+        proc.close();
         
-        var files = FileSystem.readDirectory(src);
-        for (file in files) {
-            if (skipDirs != null && skipDirs.indexOf(file) != -1) {
-                continue;
+        var lines = output.split("\n");
+        for (line in lines) {
+            line = StringTools.trim(line);
+            if (line != "" && !StringTools.startsWith(line, "-D")) {
+                line = StringTools.replace(line, "\r", "");
+                var libPath = line + "/android/" + DEFAULT_ABI;
+                if (FileSystem.exists(libPath)) {
+                    Console.info("Found HashLink libs in haxelib: " + libPath);
+                    return libPath;
+                }
             }
-            
+        }
+    } catch (e:Dynamic) {}
+    
+    Console.error("Could not find HashLink Android libraries in any location");
+    return null;
+}
+    
+function getBeapHome():String {
+    try {
+        var proc = new Process("haxelib", ["path", "beap"]);
+        var output = proc.stdout.readAll().toString();
+        proc.close();
+        
+        var lines = output.split("\n");
+        for (line in lines) {
+            line = StringTools.trim(line);
+            // 跳过空行和以 -D 开头的定义行
+            if (line != "" && !StringTools.startsWith(line, "-D")) {
+                // 移除可能的 \r
+                line = StringTools.replace(line, "\r", "");
+                return line;
+            }
+        }
+    } catch (e:Dynamic) {
+        Console.warning("Failed to get beap home: " + e);
+    }
+    return "";
+}
+    
+function getAndroidSdk():String {
+    // 1. 环境变量
+    var androidHome = Sys.getEnv("ANDROID_HOME");
+    if (androidHome == null) androidHome = Sys.getEnv("ANDROID_SDK_ROOT");
+    if (androidHome != null && FileSystem.exists(androidHome)) {
+        return androidHome;
+    }
+    
+    // 2. .beaprc 配置
+    var configSdk = SetupCommand.getConfigValue("android_sdk");
+    if (configSdk != null && configSdk != "" && FileSystem.exists(configSdk)) {
+        return configSdk;
+    }
+    
+    // 3. 常见路径
+    var commonPaths = [
+        "C:/Users/" + Sys.getEnv("USERNAME") + "/AppData/Local/Android/Sdk",
+        "C:/Program Files (x86)/Android/android-sdk",
+        "C:/Android/Sdk",
+        "D:/Android/Sdk",
+        Sys.getEnv("LOCALAPPDATA") + "/Android/Sdk"
+    ];
+    
+    for (path in commonPaths) {
+        if (path != null && FileSystem.exists(path)) {
+            return path;
+        }
+    }
+    
+    return null;
+}
+
+function getAndroidNdk():String {
+    // 1. 环境变量
+    var ndkHome = Sys.getEnv("ANDROID_NDK_HOME");
+    if (ndkHome == null) ndkHome = Sys.getEnv("NDK_HOME");
+    if (ndkHome != null && FileSystem.exists(ndkHome)) {
+        return ndkHome;
+    }
+    
+    // 2. .beaprc 配置
+    var configNdk = SetupCommand.getConfigValue("android_ndk");
+    if (configNdk != null && configNdk != "" && FileSystem.exists(configNdk)) {
+        return configNdk;
+    }
+    
+    // 3. SDK 中的 NDK
+    var sdk = getAndroidSdk();
+    if (sdk != null) {
+        var ndkPath = sdk + "/ndk";
+        if (FileSystem.exists(ndkPath)) {
+            var versions = FileSystem.readDirectory(ndkPath);
+            if (versions.length > 0) {
+                return ndkPath + "/" + versions[0];
+            }
+        }
+        var bundlePath = sdk + "/ndk-bundle";
+        if (FileSystem.exists(bundlePath)) return bundlePath;
+    }
+    
+    return null;
+}
+    
+    function getAdbPath():String {
+        var sdk = getAndroidSdk();
+        if (sdk != null) {
+            var adb = sdk + "/platform-tools/adb";
+            #if windows
+            adb += ".exe";
+            #end
+            if (FileSystem.exists(adb)) return adb;
+        }
+        return "adb"; // 尝试 PATH 中的 adb
+    }
+    
+    function getPackageName(config:Config):String {
+        // 将项目名转换为有效的包名
+        var cleanName = ~/[^a-zA-Z0-9_]/g.replace(config.projectName, "_").toLowerCase();
+        return "com.beap." + cleanName;
+    }
+    
+    // ==================== 工具方法 ====================
+    
+    function copyDirectory(src:String, dst:String):Void {
+        if (!FileSystem.exists(src)) return;
+        if (!FileSystem.exists(dst)) FileSystem.createDirectory(dst);
+        
+        for (file in FileSystem.readDirectory(src)) {
             var srcPath = src + "/" + file;
             var dstPath = dst + "/" + file;
             
             if (FileSystem.isDirectory(srcPath)) {
-                copyDirectory(srcPath, dstPath, config, skipDirs);
+                copyDirectory(srcPath, dstPath);
             } else {
                 File.copy(srcPath, dstPath);
             }
         }
-    }
-    
-    function getBeapHome():String {
-        try {
-            var process = new Process("haxelib", ["path", "beap"]);
-            var output = process.stdout.readAll().toString();
-            process.close();
-            
-            var lines = output.split("\n");
-            if (lines.length > 0) {
-                var path = StringTools.trim(lines[0]);
-                while (StringTools.endsWith(path, "/") || StringTools.endsWith(path, "\\")) {
-                    path = path.substr(0, path.length - 1);
-                }
-                
-                var testPaths = [
-                    path,
-                    path + "\\bin",
-                    path + "\\git",
-                    StringTools.replace(path, "/git", ""),
-                    StringTools.replace(path, "\\git", "")
-                ];
-                
-                for (testPath in testPaths) {
-                    if (FileSystem.exists(testPath + "\\run.n")) {
-                        return testPath;
-                    }
-                    if (FileSystem.exists(testPath + "\\bin\\run.n")) {
-                        return testPath;
-                    }
-                }
-                
-                return path;
-            }
-        } catch (e:Dynamic) {}
-        
-        var currentDir = Sys.getCwd();
-        var haxelibLocalPath = currentDir + "\\.haxelib\\beap";
-        if (FileSystem.exists(haxelibLocalPath + "\\run.n")) {
-            return haxelibLocalPath;
-        }
-        
-        var userProfile = Sys.getEnv("USERPROFILE");
-        if (userProfile != null) {
-            var userHaxelibPath = userProfile + "\\haxelib\\beap";
-            if (FileSystem.exists(userHaxelibPath + "\\run.n")) {
-                return userHaxelibPath;
-            }
-            var userHaxelibGitPath = userProfile + "\\haxelib\\beap\\git";
-            if (FileSystem.exists(userHaxelibGitPath + "\\run.n")) {
-                return userHaxelibGitPath;
-            }
-        }
-        
-        var globalPaths = [
-            "C:\\HaxeToolkit\\lib\\beap",
-            "C:\\HaxeToolkit\\haxe\\lib\\beap",
-            "C:\\Program Files\\Haxe\\lib\\beap"
-        ];
-        
-        for (p in globalPaths) {
-            if (FileSystem.exists(p + "\\run.n")) {
-                return p;
-            }
-            if (FileSystem.exists(p + "\\git\\run.n")) {
-                return p + "\\git";
-            }
-        }
-        
-        return "";
-    }
-    
-    function copyResources(config:Config) {
-        var platform = getName();
-        var androidResDir = config.getOutDir(platform) + "/android/app/src/main/res";
-        
-        // 复制 assets
-        if (FileSystem.exists("assets")) {
-            var targetAssets = androidResDir + "/../assets";
-            if (!FileSystem.exists(targetAssets)) {
-                FileSystem.createDirectory(targetAssets);
-            }
-            copyDirectory("assets", targetAssets, config);
-        }
-        
-        // 复制项目中的 res 目录
-        if (FileSystem.exists("res")) {
-            copyDirectory("res", androidResDir, config);
-        }
-        
-        // 复制应用图标
-        var iconPaths = [
-            "icon.png",
-            "ic_launcher.png", 
-            "res/drawable/ic_launcher.png",
-            "assets/icon.png"
-        ];
-        
-        var iconFound = false;
-        for (iconPath in iconPaths) {
-            if (FileSystem.exists(iconPath)) {
-                var drawableDir = androidResDir + "/drawable";
-                if (!FileSystem.exists(drawableDir)) {
-                    FileSystem.createDirectory(drawableDir);
-                }
-                var targetIcon = drawableDir + "/ic_launcher.png";
-                File.copy(iconPath, targetIcon);
-                Console.info("Copied icon: " + iconPath + " -> " + targetIcon);
-                iconFound = true;
-                break;
-            }
-        }
-        
-        if (!iconFound) {
-            var drawableDir = androidResDir + "/drawable";
-            if (!FileSystem.exists(drawableDir)) {
-                FileSystem.createDirectory(drawableDir);
-            }
-            var defaultIcon = '<?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="48dp"
-    android:height="48dp"
-    android:viewportWidth="24"
-    android:viewportHeight="24">
-    <path
-        android:fillColor="#3F51B5"
-        android:pathData="M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2z"/>
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M8,12 L16,12 M12,8 L12,16"/>
-</vector>';
-            File.saveContent(drawableDir + "/ic_launcher.xml", defaultIcon);
-            Console.info("Created default XML icon");
-        }
-    }
-    
-    function runGradle(config:Config):Bool {
-        var platform = getName();
-        var androidDir = config.getOutDir(platform) + "/android";
-        var currentDir = Sys.getCwd();
-        
-        Console.info("Checking Android project directory: " + androidDir);
-        
-        if (!FileSystem.exists(androidDir)) {
-            Console.error("Android directory not found: " + androidDir);
-            return false;
-        }
-        
-        var requiredFiles = [
-            androidDir + "/settings.gradle",
-            androidDir + "/build.gradle", 
-            androidDir + "/app/build.gradle",
-            androidDir + "/app/src/main/AndroidManifest.xml"
-        ];
-        
-        var missingFiles = [];
-        for (file in requiredFiles) {
-            if (!FileSystem.exists(file)) {
-                missingFiles.push(file);
-            }
-        }
-        
-        if (missingFiles.length > 0) {
-            Console.error("Missing required Android project files:");
-            for (file in missingFiles) {
-                Console.error("  - " + file);
-            }
-            return false;
-        }
-        
-        var localProps = androidDir + "/local.properties";
-        if (!FileSystem.exists(localProps)) {
-            Console.info("local.properties not found, creating...");
-            var sdkPath = getAndroidSdk();
-            if (sdkPath != null) {
-                var sdkPathFormatted = StringTools.replace(sdkPath, "\\", "/");
-                File.saveContent(localProps, 'sdk.dir=$sdkPathFormatted\n');
-                Console.info("Created local.properties");
-            } else {
-                Console.error("Android SDK not found");
-                return false;
-            }
-        }
-        
-        var gradleBat = androidDir + "/gradlew.bat";
-        if (!FileSystem.exists(gradleBat)) {
-            Console.info("gradlew.bat not found, generating...");
-            if (!downloadGradleWrapper(androidDir)) {
-                Console.error("Failed to generate Gradle wrapper");
-                return false;
-            }
-        }
-        
-        var javaCheck = Sys.command("java -version > nul 2>&1");
-        if (javaCheck != 0) {
-            Console.error(Lang.get("android_java_not_found"));
-            Console.info("Please install JDK 8 or higher and add it to PATH");
-            return false;
-        }
-        
-        Sys.setCwd(androidDir);
-        
-        Console.info("Running Gradle build in: " + androidDir);
-        var result = Sys.command("cmd", ["/c", "gradlew.bat", "assembleDebug", "--no-daemon", "--stacktrace"]);
-        
-        if (result == 0) {
-            var possibleApkPaths = [
-                androidDir + "/app/build/outputs/apk/debug/app-debug.apk",
-                androidDir + "/app/build/outputs/apk/debug/" + config.projectName.toLowerCase() + "-debug.apk",
-                androidDir + "/app/build/outputs/apk/debug/" + config.projectName + "-debug.apk",
-            ];
-            
-            var foundApk = "";
-            for (apkPath in possibleApkPaths) {
-                if (FileSystem.exists(apkPath)) {
-                    foundApk = apkPath;
-                    break;
-                }
-            }
-            
-            if (foundApk != "") {
-                var targetApk = config.getOutputPath(platform, ".apk");
-                var targetDir = Path.directory(targetApk);
-                if (!FileSystem.exists(targetDir)) {
-                    FileSystem.createDirectory(targetDir);
-                }
-                File.copy(foundApk, targetApk);
-                Console.success("APK generated: " + targetApk);
-            }
-        } else {
-            Console.error("Gradle build failed with code: " + result);
-        }
-        
-        Sys.setCwd(currentDir);
-        return result == 0;
-    }
-    
-    function downloadGradleWrapper(androidDir:String):Bool {
-        var wrapperDir = androidDir + "/gradle/wrapper";
-        if (!FileSystem.exists(wrapperDir)) {
-            FileSystem.createDirectory(wrapperDir);
-        }
-        
-        var wrapperProps = wrapperDir + "/gradle-wrapper.properties";
-        if (!FileSystem.exists(wrapperProps)) {
-            var propsContent = 'distributionBase=GRADLE_USER_HOME
-distributionPath=wrapper/dists
-distributionUrl=https\\://services.gradle.org/distributions/gradle-8.7-bin.zip
-zipStoreBase=GRADLE_USER_HOME
-zipStorePath=wrapper/dists';
-            File.saveContent(wrapperProps, propsContent);
-        }
-        
-        var gradlePropsPath = androidDir + "/gradle.properties";
-        if (!FileSystem.exists(gradlePropsPath)) {
-            var gradleProps = '# Project-wide Gradle settings.
-org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
-android.useAndroidX=true
-android.enableJetifier=true
-';
-            File.saveContent(gradlePropsPath, gradleProps);
-            Console.info("Created gradle.properties with AndroidX enabled");
-        }
-        
-        var gradlewBat = androidDir + "/gradlew.bat";
-        var batContent = '@echo off
-set DIR=%~dp0
-set WRAPPER_JAR="%DIR%gradle\\wrapper\\gradle-wrapper.jar"
-
-if not exist %WRAPPER_JAR% (
-    echo Gradle wrapper JAR not found
-    exit /b 1
-)
-
-java -cp %WRAPPER_JAR% org.gradle.wrapper.GradleWrapperMain %*
-';
-        File.saveContent(gradlewBat, batContent);
-        
-        Console.success("Gradle wrapper ready");
-        return true;
-    }
-    
-    function getAdbPath():String {
-        var androidSdk = getAndroidSdk();
-        if (androidSdk != null) {
-            // 优先检查 platform-tools 目录
-            var adbPath = androidSdk + "/platform-tools/adb";
-            #if windows
-            adbPath += ".exe";
-            #end
-            if (FileSystem.exists(adbPath)) {
-                return adbPath;
-            }
-            
-            // 兼容旧版 SDK（adb 直接在 SDK 根目录）
-            adbPath = androidSdk + "/adb";
-            #if windows
-            adbPath += ".exe";
-            #end
-            if (FileSystem.exists(adbPath)) {
-                return adbPath;
-            }
-        }
-        
-        // 尝试从系统 PATH 中查找 adb
-        #if windows
-        var result = Sys.command("where adb > nul 2>&1");
-        #else
-        var result = Sys.command("which adb > /dev/null 2>&1");
-        #end
-        if (result == 0) {
-            return "adb";
-        }
-        
-        return "";
-    }
-    
-    function getPackageName(config:Config):String {
-        var packageName = StringTools.replace(config.projectName, "-", "_");
-        packageName = StringTools.replace(packageName, " ", "_");
-        packageName = packageName.toLowerCase();
-        
-        var regex = ~/[^a-z0-9_]/g;
-        packageName = regex.replace(packageName, "_");
-        
-        return "com.beap." + packageName;
     }
 }

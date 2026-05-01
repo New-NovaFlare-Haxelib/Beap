@@ -1,0 +1,15 @@
+-cp src
+-cp .
+-main Main
+-lib hlsdl3
+-lib heaps
+-D windows
+-D sdl3
+-D use_sdl3
+-D windowTitle=MyGame
+-D windowSize=1280x720
+-D windowResizable
+-D windowFps=60
+-D debug
+-debug
+-hl out/windows/debug/Main.c

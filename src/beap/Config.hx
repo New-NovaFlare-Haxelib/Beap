@@ -16,7 +16,11 @@ class Config {
     
     public function new() {
         projectDir = normalizePath(Sys.getCwd());
-        platformInfo = PlatformUtils.getDetailedInfo();
+        platformInfo = PlatformUtils.getOsName() + " " + PlatformUtils.getArch();
+    }
+    
+    public function load():Void {
+        loadProjectConfig();
     }
     
     public function init() {

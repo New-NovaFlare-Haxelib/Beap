@@ -3,338 +3,347 @@ package beap;
 import sys.FileSystem;
 import sys.io.File;
 
+/**
+ * Multi-language support for Beap
+ * Supports Chinese (zh) and English (en)
+ * Language can be set in project.xml or via environment variable
+ */
 class Lang {
-    static var currentLang:String = "en";
-    static var translations:Map<String, Map<String, String>> = new Map();
-    static var configPath:String = "";
+    
+    static var currentLang:String = "zh"; // Default to Chinese
+    static var translations:Map<String, Map<String, String>> = [];
     
     public static function init() {
-        // 获取配置文件路径
-        var home = Sys.getEnv("USERPROFILE");
-        if (home == null) home = Sys.getEnv("HOME");
-        if (home != null) {
-            configPath = home + "/.beaprc";
+        // Check environment variable
+        var envLang = Sys.getEnv("BEAP_LANG");
+        if (envLang != null && envLang != "") {
+            currentLang = envLang;
         }
         
-        // 加载英文
-        loadEnglish();
-        
-        // 加载中文
-        loadChinese();
-        
-        // 加载用户语言设置
-        loadLangSetting();
+        // Initialize translations
+        initTranslations();
     }
     
-    static function loadEnglish() {
+    static function initTranslations() {
+        // English translations
         var en = new Map<String, String>();
-        
-        // 通用
-        en.set("app_name", "beap - Heaps Build Tool");
-        en.set("version", "1.0.0");
-        en.set("lang_switched", "Language switched to English");
-        en.set("unknown_lang", "Unknown language: {0}");
-        en.set("unknown_cmd", "Unknown command: {0}");
-        en.set("unknown_target", "Unknown target: {0}");
-        
-        // 构建相关
-        en.set("build_hl", "Building HashLink bytecode...");
         en.set("build_windows", "Building Windows executable...");
-        en.set("build_linux", "Building Linux executable...");
-        en.set("build_mac", "Building macOS executable...");
         en.set("build_android", "Building Android APK...");
-        en.set("build_ios", "Building iOS app...");
-        en.set("build_html5", "Building HTML5...");
-        
-        // 编译相关
-        en.set("compile_hl", "Compiling Haxe to HashLink...");
-        en.set("compile_haxe", "Compiling Haxe to C...");
-        en.set("compile_exe", "Compiling to EXE with MSVC...");
-        en.set("compile_success", "Compilation successful!");
-        en.set("compile_failed", "Compilation failed!");
-        
-        // 结果相关
-        en.set("build_success", "Build complete: {0}");
-        en.set("build_failed", "Build failed!");
-        en.set("stop_success", "Stopped previous game process.");
-        
-        // 错误相关
-        en.set("hl_not_found", "HashLink not found! Please install HashLink first.");
-        en.set("haxe_not_found", "Haxe not found! Please install Haxe first.");
-        en.set("exe_not_found", "Executable not found. Run 'beap build windows' first.");
-        en.set("hl_file_not_found", "HL file not found. Run 'beap build hl' first.");
-        en.set("src_not_found", "Error: src/Main.hx not found!");
-        en.set("not_in_project", "Please make sure you are in your Heaps project directory.");
-        en.set("run_init_first", "Or run 'beap init' to create a new project.");
-        
-        // 环境检查
-        en.set("checking_env", "Checking environment...");
-        en.set("env_ok", "Environment ready!");
-        
-        // 用法帮助
-        en.set("need_target", "Usage: beap build <target>");
-        en.set("targets", "Targets:");
-        en.set("target_hl", "HashLink bytecode (fast development)");
-        en.set("target_windows", "Windows executable (.exe)");
-        en.set("target_linux", "Linux executable");
-        en.set("target_mac", "macOS executable");
-        en.set("target_android", "Android APK");
-        en.set("target_ios", "iOS app");
-        en.set("target_html5", "HTML5/JavaScript");
-        en.set("examples", "Examples:");
-        en.set("ex_build_hl", "beap build hl        # Build HashLink bytecode");
-        en.set("ex_build_windows", "beap build windows   # Build Windows exe");
-        en.set("ex_test_hl", "beap test hl          # Build and run HashLink");
-        en.set("ex_test_windows", "beap test windows     # Build and run Windows exe");
-        
-        // 命令帮助
-        en.set("commands", "Commands:");
-        en.set("cmd_build", "build <target>    Build for specific platform");
-        en.set("cmd_test", "test <target>     Build and run for specific platform");
-        en.set("cmd_stop", "stop              Stop running game");
-        en.set("cmd_lang", "lang [en/zh]      Set language for beap");
-        en.set("cmd_setup", "setup             Setup beap for direct access");
-        en.set("cmd_help", "help              Show this help");
-        
-        // 运行相关
-        en.set("running", "Running {0}...");
-        en.set("running_with_test", "Running {0} in test mode...");
-        
-        // 配置文件相关
-        en.set("using_user_config", "Using user's build.hxml");
-        en.set("using_default_config", "Using default build configuration");
-        en.set("config_read_error", "Warning: Failed to read build.hxml, using default.");
-        
-        // Visual Studio 相关
-        en.set("vs_found", "Found: {0}");
-        en.set("vs_not_found", "Error: Visual Studio not found!");
+        en.set("compile_haxe", "Compiling Haxe to C code...");
         en.set("compiling_exe", "Compiling to EXE...");
-        en.set("compilation_failed", "Compilation failed with code: {0}");
-        en.set("no_exe_generated", "Build failed! No EXE generated.");
-        
-        // init 命令相关
-        en.set("creating_project", "Creating new Heaps project: {0}");
-        en.set("project_created", "Project created successfully!");
-        en.set("dir_exists", "Directory already exists: {0}");
-        en.set("overwrite_confirm", "Overwrite? (y/N): ");
-        en.set("overwrite_cancelled", "Project creation cancelled.");
-        en.set("copying_template", "Copying template files...");
-        en.set("template_not_found", "Template not found: {0}");
-        en.set("edit_config", "Edit .beap to change project name");
-        en.set("next_steps", "Next steps:");
-        en.set("cd_project", "cd {0}");
-        en.set("run_beap", "beap test hl        # Build and run");
-        
-        // stop 命令
-        en.set("stopping_game", "Stopping game...");
-        en.set("game_not_running", "No running game found.");
-        
-        // setup 命令
-        en.set("setting_up", "Setting up beap for direct access...");
-        en.set("setup_success", "beap has been set up successfully!");
-        en.set("setup_failed", "Setup failed: {0}");
-
-        en.set("running_on", "running on");
-        en.set("beap_path", "beap path");
-        en.set("current_config", "Current configuration:");
-        en.set("project", "Project");
-        en.set("directory", "Directory");
-        en.set("platform", "Platform");
-        en.set("ex_setup", "beap setup                # Setup for direct access");
-
+        en.set("build_failed", "Build failed!");
+        en.set("build_success", "Build successful: {0}");
+        en.set("no_exe_generated", "No executable was generated!");
+        en.set("compilation_failed", "Compilation failed with exit code: {0}");
+        en.set("vs_not_found", "Visual Studio not found!");
+        en.set("vs_found", "Found: {0}");
+        en.set("hl_not_found", "HashLink not found!");
+        en.set("exe_not_found", "Executable not found!");
+        en.set("running", "Running {0}...");
+        en.set("cleaning", "Cleaning build artifacts...");
+        en.set("clean_done", "Clean complete!");
+        en.set("init_project", "Initializing project...");
+        en.set("init_done", "Project initialized!");
+        en.set("setup_tool", "Setting up tools...");
+        en.set("setup_done", "Setup complete!");
+        en.set("checking_updates", "Checking for updates...");
+        en.set("update_done", "Update complete!");
+        en.set("specify_platform", "Please specify a platform!");
+        en.set("unsupported_platform", "Unsupported platform: {0}");
+        en.set("src_not_found", "Source file not found: src/Main.hx");
         en.set("project_dir", "Project directory");
-
-        en.set("need_target_test", "Usage: beap test <target>");
-        en.set("build_success_hl", "Build complete: build/{0}.hl");
-        en.set("build_success_exe", "Build complete: build/{0}.exe");
+        en.set("not_in_project", "Not in a project directory. Use 'beap init' to create a new project.");
+        en.set("unknown_command", "Unknown command: {0}");
+        en.set("android_sdk_not_found", "Android SDK not found!");
+        en.set("android_ndk_not_found", "Android NDK not found!");
+        en.set("gradle_build_failed", "Gradle build failed!");
+        en.set("apk_built", "APK built: {0}");
+        en.set("installing_apk", "Installing APK...");
+        en.set("starting_app", "Starting application...");
+        en.set("app_started", "Application started!");
+        en.set("download_started", "Downloading {0}...");
+        en.set("download_complete", "Download complete!");
+        en.set("extracting", "Extracting {0}...");
+        en.set("extract_complete", "Extraction complete!");
+        en.set("sdl2_selected", "Using SDL2");
+        en.set("sdl3_selected", "Using SDL3");
+        en.set("config_loaded", "Configuration loaded: {0}");
+        en.set("config_saved", "Configuration saved: {0}");
+        en.set("template_created", "Template created: {0}");
+        en.set("file_copied", "Copied: {0}");
+        en.set("directory_created", "Directory created: {0}");
+        en.set("hashlink_downloaded", "HashLink binaries downloaded to: {0}");
+        en.set("already_up_to_date", "Already up to date!");
+        en.set("update_available", "Update available: {0} -> {1}");
+        en.set("no_updates", "No updates available.");
+        en.set("platform_list", "Available platforms:");
+        en.set("current_config", "Current configuration:");
+        en.set("sdl_version", "SDL Version: {0}");
+        en.set("project_name", "Project: {0}");
+        en.set("package_name", "Package: {0}");
+        en.set("test_mode", "Running in test mode...");
+        en.set("test_complete", "Test complete!");
+        en.set("error_prefix", "[ERROR]");
+        en.set("warning_prefix", "[WARNING]");
+        en.set("info_prefix", "[INFO]");
+        en.set("success_prefix", "[SUCCESS]");
+        en.set("yes", "Yes");
+        en.set("no", "No");
+        en.set("cancel", "Cancel");
+        en.set("confirm", "Confirm");
+        en.set("abort", "Abort");
+        en.set("retry", "Retry");
+        en.set("ignore", "Ignore");
+        en.set("all", "All");
+        en.set("none", "None");
+        en.set("select_platform", "Select platform:");
+        en.set("select_sdl", "Select SDL version:");
+        en.set("sdl2", "SDL2");
+        en.set("sdl3", "SDL3");
+        en.set("debug_mode", "Debug mode");
+        en.set("release_mode", "Release mode");
+        en.set("building", "Building...");
+        en.set("done", "Done!");
+        en.set("failed", "Failed!");
+        en.set("skipped", "Skipped");
+        en.set("processing", "Processing...");
+        en.set("waiting", "Waiting...");
+        en.set("loading", "Loading...");
+        en.set("saving", "Saving...");
+        en.set("deleting", "Deleting...");
+        en.set("creating", "Creating...");
+        en.set("copying", "Copying...");
+        en.set("moving", "Moving...");
+        en.set("searching", "Searching...");
+        en.set("found", "Found: {0}");
+        en.set("not_found", "Not found: {0}");
+        en.set("using_cached", "Using cached version: {0}");
+        en.set("downloading_fresh", "Downloading fresh copy...");
+        en.set("network_error", "Network error: {0}");
+        en.set("permission_denied", "Permission denied: {0}");
+        en.set("file_exists", "File already exists: {0}");
+        en.set("overwrite_confirm", "Overwrite {0}?");
+        en.set("invalid_path", "Invalid path: {0}");
+        en.set("invalid_config", "Invalid configuration: {0}");
+        en.set("missing_dependency", "Missing dependency: {0}");
+        en.set("installing_dependency", "Installing dependency: {0}...");
+        en.set("dependency_installed", "Dependency installed: {0}");
+        en.set("dependency_failed", "Failed to install dependency: {0}");
+        en.set("help_title", "Beap - Build Tool for HashLink/C Applications");
+        en.set("help_version", "Version 2.0.0 - SDL2/SDL3 Dual Support");
+        en.set("help_usage", "Usage: beap <command> [options]");
+        en.set("help_commands", "Commands:");
+        en.set("help_options", "Options:");
+        en.set("help_config", "Configuration:");
+        en.set("help_examples", "Examples:");
+        en.set("cmd_init", "  init              Initialize a new project");
+        en.set("cmd_build", "  build <platform>  Build for a platform (android, windows)");
+        en.set("cmd_run", "  run <platform>    Run on a platform");
+        en.set("cmd_test", "  test <platform>   Build and run on a platform");
+        en.set("cmd_clean", "  clean             Clean build artifacts");
+        en.set("cmd_setup", "  setup [target]    Setup tools (android, hashlink, sdl2, sdl3)");
+        en.set("cmd_update", "  update            Check for updates");
+        en.set("cmd_list", "  list              List available platforms");
+        en.set("cmd_help", "  help              Show this help");
+        en.set("opt_debug", "  -debug, -d        Build in debug mode");
+        en.set("opt_project", "  -project <path>   Specify project directory");
+        en.set("cfg_project", "  project.xml       Main project configuration (like lime)");
+        en.set("cfg_beap", "  .beap             Local project settings");
+        en.set("ex_init", "  beap init");
+        en.set("ex_build_windows", "  beap build windows");
+        en.set("ex_build_android", "  beap build android");
+        en.set("ex_run_windows", "  beap run windows");
+        en.set("ex_setup_android", "  beap setup android");
+        en.set("ex_test_windows", "  beap test windows");
+        
+        // Chinese translations
+        var zh = new Map<String, String>();
+        zh.set("build_windows", "正在编译 Windows 可执行文件...");
+        zh.set("build_android", "正在编译 Android APK...");
+        zh.set("compile_haxe", "正在将 Haxe 编译为 C 代码...");
+        zh.set("compiling_exe", "正在编译为 EXE...");
+        zh.set("build_failed", "编译失败！");
+        zh.set("build_success", "编译完成: {0}");
+        zh.set("no_exe_generated", "没有生成可执行文件！");
+        zh.set("compilation_failed", "编译失败，退出代码: {0}");
+        zh.set("vs_not_found", "未找到 Visual Studio！");
+        zh.set("vs_found", "找到: {0}");
+        zh.set("hl_not_found", "未找到 HashLink！");
+        zh.set("exe_not_found", "未找到可执行文件！");
+        zh.set("running", "正在运行 {0}...");
+        zh.set("cleaning", "正在清理构建文件...");
+        zh.set("clean_done", "清理完成！");
+        zh.set("init_project", "正在初始化项目...");
+        zh.set("init_done", "项目初始化完成！");
+        zh.set("setup_tool", "正在设置工具...");
+        zh.set("setup_done", "设置完成！");
+        zh.set("checking_updates", "正在检查更新...");
+        zh.set("update_done", "更新完成！");
+        zh.set("specify_platform", "请指定平台！");
+        zh.set("unsupported_platform", "不支持的平台: {0}");
+        zh.set("src_not_found", "未找到源文件: src/Main.hx");
+        zh.set("project_dir", "项目目录");
+        zh.set("not_in_project", "不在项目目录中。使用 'beap init' 创建新项目。");
+        zh.set("unknown_command", "未知命令: {0}");
+        zh.set("android_sdk_not_found", "未找到 Android SDK！");
+        zh.set("android_ndk_not_found", "未找到 Android NDK！");
+        zh.set("gradle_build_failed", "Gradle 构建失败！");
+        zh.set("apk_built", "APK 已构建: {0}");
+        zh.set("installing_apk", "正在安装 APK...");
+        zh.set("starting_app", "正在启动应用...");
+        zh.set("app_started", "应用已启动！");
+        zh.set("download_started", "正在下载 {0}...");
+        zh.set("download_complete", "下载完成！");
+        zh.set("extracting", "正在解压 {0}...");
+        zh.set("extract_complete", "解压完成！");
+        zh.set("sdl2_selected", "使用 SDL2");
+        zh.set("sdl3_selected", "使用 SDL3");
+        zh.set("config_loaded", "配置已加载: {0}");
+        zh.set("config_saved", "配置已保存: {0}");
+        zh.set("template_created", "模板已创建: {0}");
+        zh.set("file_copied", "已复制: {0}");
+        zh.set("directory_created", "目录已创建: {0}");
+        zh.set("hashlink_downloaded", "HashLink 二进制文件已下载到: {0}");
+        zh.set("already_up_to_date", "已经是最新版本！");
+        zh.set("update_available", "有可用更新: {0} -> {1}");
+        zh.set("no_updates", "没有可用更新。");
+        zh.set("platform_list", "可用平台:");
+        zh.set("current_config", "当前配置:");
+        zh.set("sdl_version", "SDL 版本: {0}");
+        zh.set("project_name", "项目: {0}");
+        zh.set("package_name", "包名: {0}");
+        zh.set("test_mode", "正在以测试模式运行...");
+        zh.set("test_complete", "测试完成！");
+        zh.set("error_prefix", "[错误]");
+        zh.set("warning_prefix", "[警告]");
+        zh.set("info_prefix", "[信息]");
+        zh.set("success_prefix", "[成功]");
+        zh.set("yes", "是");
+        zh.set("no", "否");
+        zh.set("cancel", "取消");
+        zh.set("confirm", "确认");
+        zh.set("abort", "中止");
+        zh.set("retry", "重试");
+        zh.set("ignore", "忽略");
+        zh.set("all", "全部");
+        zh.set("none", "无");
+        zh.set("select_platform", "选择平台:");
+        zh.set("select_sdl", "选择 SDL 版本:");
+        zh.set("sdl2", "SDL2");
+        zh.set("sdl3", "SDL3");
+        zh.set("debug_mode", "调试模式");
+        zh.set("release_mode", "发布模式");
+        zh.set("building", "正在构建...");
+        zh.set("done", "完成！");
+        zh.set("failed", "失败！");
+        zh.set("skipped", "已跳过");
+        zh.set("processing", "正在处理...");
+        zh.set("waiting", "正在等待...");
+        zh.set("loading", "正在加载...");
+        zh.set("saving", "正在保存...");
+        zh.set("deleting", "正在删除...");
+        zh.set("creating", "正在创建...");
+        zh.set("copying", "正在复制...");
+        zh.set("moving", "正在移动...");
+        zh.set("searching", "正在搜索...");
+        zh.set("found", "找到: {0}");
+        zh.set("not_found", "未找到: {0}");
+        zh.set("using_cached", "使用缓存版本: {0}");
+        zh.set("downloading_fresh", "正在下载新副本...");
+        zh.set("network_error", "网络错误: {0}");
+        zh.set("permission_denied", "权限不足: {0}");
+        zh.set("file_exists", "文件已存在: {0}");
+        zh.set("overwrite_confirm", "覆盖 {0}？");
+        zh.set("invalid_path", "无效路径: {0}");
+        zh.set("invalid_config", "无效配置: {0}");
+        zh.set("missing_dependency", "缺少依赖: {0}");
+        zh.set("installing_dependency", "正在安装依赖: {0}...");
+        zh.set("dependency_installed", "依赖已安装: {0}");
+        zh.set("dependency_failed", "安装依赖失败: {0}");
+        zh.set("help_title", "Beap - HashLink/C 应用构建工具");
+        zh.set("help_version", "版本 2.0.0 - SDL2/SDL3 双版本支持");
+        zh.set("help_usage", "用法: beap <命令> [选项]");
+        zh.set("help_commands", "命令:");
+        zh.set("help_options", "选项:");
+        zh.set("help_config", "配置:");
+        zh.set("help_examples", "示例:");
+        zh.set("cmd_init", "  init              初始化新项目");
+        zh.set("cmd_build", "  build <平台>      为指定平台构建 (android, windows)");
+        zh.set("cmd_run", "  run <平台>        在指定平台上运行");
+        zh.set("cmd_test", "  test <平台>       构建并在指定平台上运行");
+        zh.set("cmd_clean", "  clean             清理构建文件");
+        zh.set("cmd_setup", "  setup [目标]      设置工具 (android, hashlink, sdl2, sdl3)");
+        zh.set("cmd_update", "  update            检查更新");
+        zh.set("cmd_list", "  list              列出可用平台");
+        zh.set("cmd_help", "  help              显示此帮助");
+        zh.set("opt_debug", "  -debug, -d        以调试模式构建");
+        zh.set("opt_project", "  -project <路径>   指定项目目录");
+        zh.set("cfg_project", "  project.xml       主项目配置文件 (类似 lime)");
+        zh.set("cfg_beap", "  .beap             本地项目设置");
+        zh.set("ex_init", "  beap init");
+        zh.set("ex_build_windows", "  beap build windows");
+        zh.set("ex_build_android", "  beap build android");
+        zh.set("ex_run_windows", "  beap run windows");
+        zh.set("ex_setup_android", "  beap setup android");
+        zh.set("ex_test_windows", "  beap test windows");
         
         translations.set("en", en);
-    }
-    
-    static function loadChinese() {
-        var zh = new Map<String, String>();
-        
-        // 通用
-        zh.set("app_name", "beap - Heaps 构建工具");
-        zh.set("version", "1.0.0");
-        zh.set("lang_switched", "已切换语言为中文");
-        zh.set("unknown_lang", "未知语言: {0}");
-        zh.set("unknown_cmd", "未知命令: {0}");
-        zh.set("unknown_target", "未知目标平台: {0}");
-        
-        // 构建相关
-        zh.set("build_hl", "正在编译 HashLink 字节码...");
-        zh.set("build_windows", "正在编译 Windows 可执行文件...");
-        zh.set("build_linux", "正在编译 Linux 可执行文件...");
-        zh.set("build_mac", "正在编译 macOS 可执行文件...");
-        zh.set("build_android", "正在编译 Android APK...");
-        zh.set("build_ios", "正在编译 iOS 应用...");
-        zh.set("build_html5", "正在编译 HTML5...");
-        
-        // 编译相关
-        zh.set("compile_hl", "正在将 Haxe 编译为 HashLink 字节码...");
-        zh.set("compile_haxe", "正在将 Haxe 编译为 C 代码...");
-        zh.set("compile_exe", "正在使用 MSVC 编译为 EXE...");
-        zh.set("compile_success", "编译成功！");
-        zh.set("compile_failed", "编译失败！");
-        
-        // 结果相关
-        zh.set("build_success", "编译完成: {0}");
-        zh.set("build_failed", "编译失败！");
-        zh.set("stop_success", "已停止之前的游戏进程。");
-        
-        // 错误相关
-        zh.set("hl_not_found", "未找到 HashLink！请先安装 HashLink。");
-        zh.set("haxe_not_found", "未找到 Haxe！请先安装 Haxe。");
-        zh.set("exe_not_found", "未找到可执行文件。请先运行 'beap build windows'。");
-        zh.set("hl_file_not_found", "未找到 HL 文件。请先运行 'beap build hl'。");
-        zh.set("src_not_found", "错误：未找到 src/Main.hx！");
-        zh.set("not_in_project", "请确保您在 Heaps 项目目录中。");
-        zh.set("run_init_first", "或运行 'beap init' 创建新项目。");
-        
-        // 环境检查
-        zh.set("checking_env", "正在检查环境...");
-        zh.set("env_ok", "环境就绪！");
-        
-        // 用法帮助
-        zh.set("need_target", "使用方法: beap build <目标平台>");
-        zh.set("targets", "目标平台:");
-        zh.set("target_hl", "HashLink 字节码（快速开发）");
-        zh.set("target_windows", "Windows 可执行文件 (.exe)");
-        zh.set("target_linux", "Linux 可执行文件");
-        zh.set("target_mac", "macOS 可执行文件");
-        zh.set("target_android", "Android APK");
-        zh.set("target_ios", "iOS 应用");
-        zh.set("target_html5", "HTML5 / JavaScript");
-        zh.set("examples", "示例:");
-        zh.set("ex_build_hl", "beap build hl        # 编译 HashLink 字节码");
-        zh.set("ex_build_windows", "beap build windows   # 编译 Windows 版本");
-        zh.set("ex_test_hl", "beap test hl          # 编译并运行 HashLink");
-        zh.set("ex_test_windows", "beap test windows     # 编译并运行 Windows 版本");
-        
-        // 命令帮助
-        zh.set("commands", "命令:");
-        zh.set("cmd_build", "build <目标>    构建指定平台");
-        zh.set("cmd_test", "test <目标>     构建并运行指定平台");
-        zh.set("cmd_stop", "stop            停止正在运行的游戏");
-        zh.set("cmd_lang", "lang [en/zh]    设置 beap 的语言");
-        zh.set("cmd_setup", "setup           设置 beap 为直接访问");
-        zh.set("cmd_help", "help            显示此帮助");
-        
-        // 运行相关
-        zh.set("running", "正在运行 {0}...");
-        zh.set("running_with_test", "正在以测试模式运行 {0}...");
-        
-        // 配置文件相关
-        zh.set("using_user_config", "正在使用用户自定义的 build.hxml");
-        zh.set("using_default_config", "正在使用默认构建配置");
-        zh.set("config_read_error", "警告：读取 build.hxml 失败，使用默认配置。");
-        
-        // Visual Studio 相关
-        zh.set("vs_found", "找到: {0}");
-        zh.set("vs_not_found", "错误：未找到 Visual Studio！");
-        zh.set("compiling_exe", "正在编译为 EXE...");
-        zh.set("compilation_failed", "编译失败，错误代码: {0}");
-        zh.set("no_exe_generated", "构建失败！未生成 EXE 文件。");
-        
-        // init 命令相关
-        zh.set("creating_project", "正在创建 Heaps 项目: {0}");
-        zh.set("project_created", "项目创建成功！");
-        zh.set("dir_exists", "目录已存在: {0}");
-        zh.set("overwrite_confirm", "是否覆盖？(y/N): ");
-        zh.set("overwrite_cancelled", "项目创建已取消。");
-        zh.set("copying_template", "正在复制模板文件...");
-        zh.set("template_not_found", "未找到模板: {0}");
-        zh.set("edit_config", "编辑 .beap 文件修改项目名称");
-        zh.set("next_steps", "下一步:");
-        zh.set("cd_project", "cd {0}");
-        zh.set("run_beap", "beap test hl        # 编译并运行");
-        
-        // stop 命令
-        zh.set("stopping_game", "正在停止游戏...");
-        zh.set("game_not_running", "没有找到正在运行的游戏。");
-        
-        // setup 命令
-        zh.set("setting_up", "正在设置 beap 为直接访问...");
-        zh.set("setup_success", "beap 设置成功！");
-        zh.set("setup_failed", "设置失败: {0}");
-
-
-        zh.set("running_on", "运行在");
-        zh.set("beap_path", "beap 路径");
-        zh.set("current_config", "当前配置:");
-        zh.set("project", "项目");
-        zh.set("directory", "目录");
-        zh.set("platform", "平台");
-        zh.set("ex_setup", "beap setup                # 设置直接访问");
-
-        zh.set("project_dir", "项目目录");
-
-        zh.set("need_target_test", "使用方法: beap test <目标平台>");
-        zh.set("build_success_hl", "编译完成: build/{0}.hl");
-        zh.set("build_success_exe", "编译完成: build/{0}.exe");
-        
         translations.set("zh", zh);
     }
     
-    static function loadLangSetting() {
-        if (configPath == null || configPath == "") return;
-        if (!FileSystem.exists(configPath)) return;
-        
-        try {
-            var content = File.getContent(configPath);
-            var lines = content.split("\n");
-            
-            for (line in lines) {
-                var trimmed = StringTools.trim(line);
-                if (trimmed == "") continue;
-                
-                if (StringTools.startsWith(trimmed, "lang=")) {
-                    var lang = trimmed.substr(5);
-                    lang = StringTools.trim(lang);
-                    if (lang == "zh" || lang == "en") {
-                        currentLang = lang;
-                    }
-                }
-            }
-        } catch (e:Dynamic) {
-            currentLang = "en";
-        }
-    }
-    
+    /**
+     * Get translated string by key
+     */
     public static function get(key:String, args:Array<String> = null):String {
         var langMap = translations.get(currentLang);
-        if (langMap == null) langMap = translations.get("en");
-        
-        var text = langMap.get(key);
-        
-        if (text == null) {
-            var enMap = translations.get("en");
-            if (enMap != null) text = enMap.get(key);
-            if (text == null) return "???" + key + "???";
+        if (langMap == null) {
+            langMap = translations.get("en");
         }
         
-        if (args != null) {
+        var text = langMap.get(key);
+        if (text == null) {
+            // Fallback to English
+            var enMap = translations.get("en");
+            text = enMap.get(key);
+            if (text == null) {
+                return key; // Return key if no translation found
+            }
+        }
+        
+        // Replace {0}, {1}, etc. with arguments
+        if (args != null && args.length > 0) {
             for (i in 0...args.length) {
-                text = StringTools.replace(text, '{$i}', args[i]);
+                text = StringTools.replace(text, "{" + i + "}", args[i]);
             }
         }
         
         return text;
     }
     
-    public static function setLang(lang:String) {
-        if (lang == "zh" || lang == "en") {
+    /**
+     * Set current language
+     */
+    public static function setLanguage(lang:String) {
+        if (translations.exists(lang)) {
             currentLang = lang;
-            if (configPath != null && configPath != "") {
-                try {
-                    File.saveContent(configPath, 'lang=$lang\n');
-                } catch (e:Dynamic) {}
-            }
         }
     }
     
-    public static function getLang():String {
+    /**
+     * Get current language code
+     */
+    public static function getCurrentLang():String {
         return currentLang;
+    }
+    
+    /**
+     * Get available languages
+     */
+    public static function getAvailableLangs():Array<String> {
+        var langs = [];
+        for (key in translations.keys()) {
+            langs.push(key);
+        }
+        return langs;
     }
 }

@@ -1,0 +1,12 @@
+-cp src
+-main Main
+
+-hl build/out/windows/main.c
+
+-lib heaps
+-lib hlsdl
+
+-D windowTitle=Template App
+-D windowSize=1280x720
+-D windowResizable
+-D sdl

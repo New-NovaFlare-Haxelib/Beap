@@ -1,12 +1,12 @@
 {
     "name": "beap",
-    "version": "1.0.0",
-    "releasenote": "Heaps build tool - cross-platform command line tool",
-    "description": "A command-line build tool for Heaps framework, similar to Lime",
+    "version": "2.0.0",
+    "releasenote": "SDL2/SDL3 dual support with automatic binary downloading, project.xml config like Lime",
+    "description": "A command-line build tool for Heaps framework with SDL2/SDL3 dual support, similar to Lime",
     "license": "MIT",
-    "tags": ["heaps", "build", "tool", "game", "cross-platform", "cli"],
+    "tags": ["heaps", "build", "tool", "game", "cross-platform", "cli", "sdl2", "sdl3", "hashlink"],
     "classPath": "",
-    "contributors": ["yourname"],
+    "contributors": ["NovaFlare"],
     "dependencies": {},
     "bin": {
         "beap": {

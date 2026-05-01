@@ -1,0 +1,10 @@
+-cp src
+-main Main
+
+-hl build/out/android/main.c
+
+-lib heaps
+-lib hlsdl
+
+-D android
+-D mobile

@@ -1,94 +1,88 @@
 package beap.utils;
 
+/**
+ * Platform utility functions
+ */
 class PlatformUtils {
+    
     public static function isWindows():Bool {
-        return Sys.systemName() == "Windows";
+        return Sys.systemName().toLowerCase().indexOf("windows") != -1;
     }
     
     public static function isMac():Bool {
-        return Sys.systemName() == "Mac";
+        var name = Sys.systemName().toLowerCase();
+        return name.indexOf("mac") != -1 || name.indexOf("darwin") != -1;
     }
     
     public static function isLinux():Bool {
-        return Sys.systemName() == "Linux";
+        return Sys.systemName().toLowerCase().indexOf("linux") != -1;
     }
     
-    public static function getSystemName():String {
-        return Sys.systemName();
+    public static function getOsName():String {
+        var name = Sys.systemName().toLowerCase();
+        if (name.indexOf("windows") != -1) return "windows";
+        if (name.indexOf("mac") != -1 || name.indexOf("darwin") != -1) return "macos";
+        if (name.indexOf("linux") != -1) return "linux";
+        return "unknown";
     }
     
-    public static function getArchitecture():String {
-        #if neko
-        return "Neko VM";
-        #elseif hl
-        return "HashLink VM";
+    public static function getArch():String {
+        var arch = Sys.systemName();
+        if (arch.indexOf("64") != -1 || arch.indexOf("x86_64") != -1) {
+            return "x86_64";
+        } else if (arch.indexOf("ARM") != -1 || arch.indexOf("aarch64") != -1) {
+            return "arm64";
+        }
+        return "x86_64";
+    }
+    
+    public static function getExecutableExtension():String {
+        #if windows
+        return ".exe";
         #else
-        var arch = Sys.getEnv("PROCESSOR_ARCHITECTURE");
-        if (arch == null || arch == "") arch = "Unknown";
-        return arch;
+        return "";
         #end
     }
     
-    public static function getDetailedInfo():String {
-        var info = getSystemName() + " " + getArchitecture();
-        
-        if (isWindows()) {
-            var version = getWindowsVersion();
-            if (version != "") info += " (" + version + ")";
-        } else if (isLinux()) {
-            var distro = getLinuxDistro();
-            if (distro != "") info += " (" + distro + ")";
-        } else if (isMac()) {
-            var version = getMacVersion();
-            if (version != "") info += " (" + version + ")";
-        }
-        
-        return info;
+    public static function getSharedLibraryExtension():String {
+        #if windows
+        return ".dll";
+        #elseif mac
+        return ".dylib";
+        #else
+        return ".so";
+        #end
     }
     
-    static function getWindowsVersion():String {
-        try {
-            var process = new sys.io.Process("cmd", ["/c", "ver"]);
-            var output = process.stdout.readAll().toString();
-            process.close();
-            
-            // 解析 Windows 版本
-            var regex = ~/Version (\d+)\.(\d+)\.(\d+)/;
-            if (regex.match(output)) {
-                var major = regex.matched(1);
-                var minor = regex.matched(2);
-                var build = regex.matched(3);
-                return "Version " + major + "." + minor + "." + build;
-            }
-        } catch (e:Dynamic) {}
-        return "";
+    public static function getStaticLibraryExtension():String {
+        #if windows
+        return ".lib";
+        #else
+        return ".a";
+        #end
     }
     
-    static function getLinuxDistro():String {
-        if (sys.FileSystem.exists("/etc/os-release")) {
-            try {
-                var content = sys.io.File.getContent("/etc/os-release");
-                var lines = content.split("\n");
-                for (line in lines) {
-                    if (line.indexOf("PRETTY_NAME=") == 0) {
-                        var value = line.substr(12);
-                        // 移除引号
-                        value = StringTools.replace(value, '"', '');
-                        return value;
-                    }
-                }
-            } catch (e:Dynamic) {}
-        }
-        return "";
+    public static function getPathSeparator():String {
+        #if windows
+        return ";";
+        #else
+        return ":";
+        #end
     }
     
-    static function getMacVersion():String {
-        try {
-            var process = new sys.io.Process("sw_vers", ["-productVersion"]);
-            var output = StringTools.trim(process.stdout.readAll().toString());
-            process.close();
-            return "macOS " + output;
-        } catch (e:Dynamic) {}
-        return "";
+    public static function normalizePath(path:String):String {
+        #if windows
+        return StringTools.replace(path, "/", "\\");
+        #else
+        return StringTools.replace(path, "\\", "/");
+        #end
+    }
+    
+    public static function getHomeDirectory():String {
+        #if windows
+        return Sys.getEnv("USERPROFILE");
+        #else
+        return Sys.getEnv("HOME");
+        #end
     }
 }

@@ -1,0 +1,11 @@
+-cp src
+-main Main
+
+-hl build/out/hl/main.hl
+
+-lib heaps
+-lib hlsdl
+
+-D console
+-D debug
+-debug
