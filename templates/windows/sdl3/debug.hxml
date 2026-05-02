@@ -9,4 +9,4 @@
 -D use_sdl3
 -D debug
 -debug
--hl build/out/windows/MyGame.c
+-hl build/out/windows/main.c

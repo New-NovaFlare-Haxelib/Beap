@@ -141,7 +141,7 @@ class Lang {
         en.set("cmd_run", "  run <platform>    Run on a platform");
         en.set("cmd_test", "  test <platform>   Build and run on a platform");
         en.set("cmd_clean", "  clean             Clean build artifacts");
-        en.set("cmd_setup", "  setup [target]    Setup tools (android, hashlink, sdl2, sdl3)");
+        en.set("cmd_setup", "  setup [target]    Setup tools (android, hashlink, sdl2, sdl3, windows, all)");
         en.set("cmd_update", "  update            Check for updates");
         en.set("cmd_list", "  list              List available platforms");
         en.set("cmd_help", "  help              Show this help");
@@ -272,7 +272,7 @@ class Lang {
         zh.set("cmd_run", "  run <平台>        在指定平台上运行");
         zh.set("cmd_test", "  test <平台>       构建并在指定平台上运行");
         zh.set("cmd_clean", "  clean             清理构建文件");
-        zh.set("cmd_setup", "  setup [目标]      设置工具 (android, hashlink, sdl2, sdl3)");
+        zh.set("cmd_setup", "  setup [目标]      设置工具 (android, hashlink, sdl2, sdl3, windows, all)");
         zh.set("cmd_update", "  update            检查更新");
         zh.set("cmd_list", "  list              列出可用平台");
         zh.set("cmd_help", "  help              显示此帮助");

@@ -7,10 +7,10 @@
 -D mobile
 -D sdl3
 -D use_sdl3
--D windowTitle=MyGame
+-D windowTitle=main
 -D windowSize=1280x720
 -D windowResizable
 -D windowFps=60
 -D debug
 -debug
--hl out/android/debug/Main.c
+-hl out/android/debug/main.c

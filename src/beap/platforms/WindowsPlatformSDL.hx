@@ -380,11 +380,14 @@ class WindowsPlatformSDL implements Platform {
         // Required libraries
         var libFiles = ["libhl.lib", "fmt.lib", "uv.lib", "ui.lib"];
         
-        // Add SDL-specific library
-        if (projectConfig.sdlVersion == "sdl3") {
-            libFiles.push("sdl3.lib");
-        } else {
-            libFiles.push("sdl.lib");
+        // SDL library - sdl.lib is the HashLink SDL interface library
+        // For SDL2: sdl.lib links against SDL2.dll
+        // For SDL3: sdl.lib links against SDL3.dll (compiled from HashLink-Beap-SDL2 source)
+        libFiles.push("sdl.lib");
+        
+        // For SDL3, also link SDL3.lib (the actual SDL3 library)
+        if (sdlDir == "sdl3") {
+            libFiles.push("SDL3.lib");
         }
         
         for (lib in libFiles) {
@@ -459,7 +462,7 @@ class WindowsPlatformSDL implements Platform {
         } else if (projectConfig.windowsSubsystem == "console") {
             subsystem = "/SUBSYSTEM:CONSOLE";
         }
-        return 'cl "' + cFile + '"' + includeArgs + ' /link' + libArgs + 
+        return 'cl "' + cFile + '"' + includeArgs + ' /link' + libArgs +
                ' user32.lib opengl32.lib gdi32.lib shell32.lib d3d11.lib dxgi.lib d3dcompiler.lib ' + 
                subsystem + ' /Fe:"' + exeFile + '" /nologo';
     }
@@ -572,6 +575,18 @@ class WindowsPlatformSDL implements Platform {
     }
     
     function getHashLinkDir():String {
+        // 1. 优先使用 tools/ 目录下的 HashLink（从 GitHub Release 下载的）
+        var beapHome = getBeapHome();
+        if (beapHome != "") {
+            var sdlDir = projectConfig.sdlVersion;
+            var toolsHlDir = beapHome + "/tools/windows/" + sdlDir;
+            if (FileSystem.exists(toolsHlDir + "/hl.exe")) {
+                Console.info("Using bundled HashLink from: " + toolsHlDir);
+                return toolsHlDir;
+            }
+        }
+        
+        // 2. 回退：查找系统安装的 HashLink
         var result = Sys.command("where hl > nul 2>&1");
         if (result == 0) {
             try {
@@ -615,6 +630,19 @@ class WindowsPlatformSDL implements Platform {
     }
     
     function getBeapHome():String {
+        // 1. Check BEAP_PATH environment variable (set by beap.bat)
+        var beapPath = Sys.getEnv("BEAP_PATH");
+        if (beapPath != null && beapPath != "" && FileSystem.exists(beapPath)) {
+            return StringTools.replace(beapPath, "\\", "/");
+        }
+        
+        // 2. Check if running from the beap git directory (contains tools/ and templates/)
+        var currentDir = StringTools.replace(Sys.getCwd(), "\\", "/");
+        if (FileSystem.exists(currentDir + "/tools/windows") && FileSystem.exists(currentDir + "/templates")) {
+            return currentDir;
+        }
+        
+        // 3. Try haxelib path
         try {
             var proc = new Process("haxelib", ["path", "beap"]);
             var output = proc.stdout.readAll().toString();
@@ -629,6 +657,32 @@ class WindowsPlatformSDL implements Platform {
                 }
             }
         } catch (e:Dynamic) {}
+        return "";
+    }
+    
+    /**
+     * Find a haxelib directory by name
+     */
+    function findHaxelibDir(libName:String):String {
+        try {
+            var proc = new Process("haxelib", ["path", libName]);
+            var output = proc.stdout.readAll().toString();
+            proc.close();
+            
+            var lines = output.split("\n");
+            for (line in lines) {
+                line = StringTools.trim(line);
+                if (line != "" && !StringTools.startsWith(line, "-D") && !StringTools.startsWith(line, "-lib")) {
+                    line = StringTools.replace(line, "\r", "");
+                    // The first non-flag line should be the library directory
+                    if (FileSystem.exists(line)) {
+                        return line;
+                    }
+                }
+            }
+        } catch (e:Dynamic) {
+            Console.warning("Could not find haxelib: " + libName + " (" + e + ")");
+        }
         return "";
     }
     
