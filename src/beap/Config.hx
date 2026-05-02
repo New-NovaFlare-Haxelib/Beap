@@ -5,7 +5,7 @@ import sys.io.File;
 import beap.utils.PlatformUtils;
 
 class Config {
-    public var projectName:String = "MyGame";
+    public var projectName:String = "Main";
     public var projectDir:String = "";
     public var isTestMode:Bool = false;
     public var platformInfo:String = "";

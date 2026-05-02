@@ -11,7 +11,7 @@ import beap.Lang;
  * Supports SDL2/SDL3 dual configuration
  * 
  * Full XML reference:
- * <project name="MyGame" package="com.example.mygame" version="1.0.0"
+ * <project name="Main" package="com.example.main" version="1.0.0"
  *          company="MyCompany" description="My game description"
  *          sdl="sdl2" main="Main">
  *   
@@ -55,9 +55,12 @@ import beap.Lang;
  *   <!-- Assets -->
  *   <assets path="assets" rename="assets" />
  *   
- *   <!-- Libraries (static linking) -->
- *   <library name="opengl32" />
- *   <library name="user32" />
+ *   <!-- Libraries (static/shared linking) -->
+ *   <library name="opengl32" />                          <!-- System library (linked by name) -->
+ *   <library name="mylib" path="lib/mylib.a" />          <!-- Static library with path -->
+ *   <library name="mylib" path="lib/mylib.so" type="shared" />  <!-- Shared library -->
+ *   <library name="mylib" path="lib/mylib.a" platform="android" />  <!-- Android-only library -->
+ *   <library name="mylib" path="lib/mylib.a" abi="arm64-v8a" />    <!-- ABI-specific library -->
  *   
  *   <!-- Paths (for include) -->
  *   <path value="C:/SDL2/include" />
@@ -71,8 +74,8 @@ import beap.Lang;
  * </project>
  */
 class ProjectConfig {
-    public var name:String = "MyGame";
-    public var packageName:String = "com.beap.mygame";
+    public var name:String = "Main";
+    public var packageName:String = "com.beap.main";
     public var version:String = "1.0.0";
     public var company:String = "";
     public var description:String = "";
@@ -82,7 +85,7 @@ class ProjectConfig {
     public var windowHeight:Int = 720;
     public var windowResizable:Bool = true;
     public var windowFullscreen:Bool = false;
-    public var windowTitle:String = "MyGame";
+    public var windowTitle:String = "main";
     public var windowFps:Int = 60;
     public var windowBackground:Int = 0x000000;
     
@@ -124,8 +127,8 @@ class ProjectConfig {
     // Assets
     public var assets:Array<Asset> = [];
     
-    // Libraries (static link)
-    public var libraries:Array<String> = [];
+    // Libraries (static/shared link)
+    public var libraries:Array<Library> = [];
     
     // Paths (for include/lib directories)
     public var paths:Array<String> = [];
@@ -256,7 +259,14 @@ class ProjectConfig {
                         
                     case "library":
                         if (child.get("name") != null) {
-                            config.libraries.push(child.get("name"));
+                            var lib = new Library();
+                            lib.name = child.get("name");
+                            if (child.get("path") != null) lib.path = child.get("path");
+                            if (child.get("type") != null) lib.type = child.get("type");
+                            if (child.get("platform") != null) lib.platform = child.get("platform");
+                            if (child.get("abi") != null) lib.abi = child.get("abi");
+                            if (child.get("if") != null) lib.ifCondition = child.get("if");
+                            config.libraries.push(lib);
                         }
                         
                     case "path":
@@ -375,9 +385,15 @@ class ProjectConfig {
         
         // Libraries
         if (libraries.length > 0) {
-            xml.add('\t<!-- Static Libraries -->\n');
+            xml.add('\t<!-- Libraries (static/shared linking) -->\n');
             for (lib in libraries) {
-                xml.add('\t<library name="${lib}" />\n');
+                xml.add('\t<library name="${lib.name}"');
+                if (lib.path != "") xml.add(' path="${lib.path}"');
+                if (lib.type != "") xml.add(' type="${lib.type}"');
+                if (lib.platform != "") xml.add(' platform="${lib.platform}"');
+                if (lib.abi != "") xml.add(' abi="${lib.abi}"');
+                if (lib.ifCondition != "") xml.add(' if="${lib.ifCondition}"');
+                xml.add(' />\n');
             }
             xml.add('\n');
         }
@@ -452,8 +468,10 @@ class ProjectConfig {
             buf.add('-lib ${sdlLib}\n');
         }
         
-        // Platform defines
-        buf.add('-D ${platform}\n');
+        // Platform defines (skip 'hl' as it's a reserved compiler flag)
+        if (platform != "hl") {
+            buf.add('-D ${platform}\n');
+        }
         if (platform == "android") {
             buf.add('-D mobile\n');
         }
@@ -524,6 +542,36 @@ class NDLL {
 class Asset {
     public var path:String = "";
     public var rename:String = "";
+    
+    public function new() {}
+}
+
+/**
+ * Library entry for static/shared linking.
+ * 
+ * XML usage:
+ *   <library name="opengl32" />                                    - System library (linked by name only)
+ *   <library name="mylib" path="lib/mylib.a" />                    - Static library with explicit path
+ *   <library name="mylib" path="lib/mylib.so" type="shared" />     - Shared library
+ *   <library name="mylib" path="lib/mylib.a" if="android" />       - Android-only library (using `if`)
+ *   <library name="mylib" path="lib/mylib.a" if="windows" />      - Windows-only library (using `if`)
+ *   <library name="mylib" path="lib/mylib.a" abi="arm64-v8a" />   - ABI-specific library (Android)
+ * 
+ * Fields:
+ *   name        - Library name (e.g., "mylib", "opengl32")
+ *   path        - Path to the library file (optional, for user-provided libraries)
+ *   type        - "static" for .a/.lib, "shared" for .so/.dll (optional, auto-detected from extension)
+ *   platform    - (deprecated) Use `if` instead. Target platform: "windows", "android", "all"
+ *   abi         - Android ABI filter: "arm64-v8a", "armeabi-v7a", "x86_64" (optional)
+ *   ifCondition - Platform condition: "android", "windows", "android || windows", "android && sdl3", "!windows"
+ */
+class Library {
+    public var name:String = "";
+    public var path:String = "";
+    public var type:String = "";    // "static", "shared", or "" (auto-detect)
+    public var platform:String = ""; // (deprecated) "windows", "android", "all", or "" (all platforms)
+    public var abi:String = "";     // Android ABI: "arm64-v8a", "armeabi-v7a", "x86_64"
+    public var ifCondition:String = ""; // Platform condition: "android", "windows", etc.
     
     public function new() {}
 }

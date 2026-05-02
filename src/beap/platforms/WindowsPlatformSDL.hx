@@ -14,6 +14,7 @@ import sys.io.Process;
 /**
  * SDL-aware Windows Platform
  * Supports both SDL2 and SDL3 with automatic binary downloading
+ * Uses NexusForge unified library for simplified linking
  */
 class WindowsPlatformSDL implements Platform {
     
@@ -89,69 +90,93 @@ class WindowsPlatformSDL implements Platform {
         
         executeWithVCVars(vsInfo, compileCmd);
         
-        return moveOutputFiles(config, platform);
+        // 8. Move output files
+        if (!moveOutputFiles(config, platform)) {
+            return false;
+        }
+        
+        // 9. Copy .hdll and .dll dependencies to the exe directory
+        copyDependencies(config, platform);
+        
+        // 10. Copy run.bat template to the build directory
+        copyRunBat(config, platform);
+        
+        return true;
     }
     
     public function run(config:Config, ?showOutput:Bool = false):Void {
-        if (!PlatformUtils.isWindows()) {
-            Console.error("Cannot run Windows executable on this platform!");
-            return;
-        }
-        
-        var platform = getName();
-        var exePath = config.getOutputPath(platform, ".exe");
-        
-        var possiblePaths = [
-            exePath,
-            "build/" + config.projectName + ".exe",
-            config.projectName + ".exe"
-        ];
-        
-        var foundPath = "";
-        for (path in possiblePaths) {
-            if (FileSystem.exists(path)) {
-                foundPath = path;
-                break;
-            }
-        }
-        
-        if (foundPath == "") {
-            Console.error(Lang.get("exe_not_found"));
-            Console.info("Try running: beap build windows first");
-            return;
-        }
-        
-        Console.success(Lang.get("running", [config.projectName]));
-        
-        // Convert path to absolute Windows path
-        var absPath = Sys.getCwd() + "\\" + StringTools.replace(foundPath, "/", "\\");
-        
-        if (showOutput) {
-            // Test mode: create a batch script that runs the game and waits
-            // When the game closes, the console window auto-closes
-            // When the console window is closed, the game process is killed
-            var title = "Test - " + config.projectName + " (trace output)";
-            var batchContent = 
-                '@echo off\n' +
-                'title ' + title + '\n' +
-                'echo Trace output for: ' + config.projectName + '\n' +
-                'echo Close this window to stop the game.\n' +
-                'echo ========================================\n' +
-                'start "" /B /WAIT "' + absPath + '"\n' +
-                'echo.\n' +
-                'echo Game has exited. Closing in 3 seconds...\n' +
-                'ping -n 3 127.0.0.1 > nul\n';
-            
-            var batchFile = Sys.getCwd() + "\\__test_run.bat";
-            File.saveContent(batchFile, batchContent);
-            
-            // Start the batch script in a new console window
-            Sys.command('start "' + title + '" cmd /c "' + batchFile + '"');
-        } else {
-            // Run mode: launch in background (no console window)
-            Sys.command('start "" "' + absPath + '"');
+    if (!PlatformUtils.isWindows()) {
+        Console.error("Cannot run Windows executable on this platform!");
+        return;
+    }
+    
+    var platform = getName();
+    var buildDir = config.getBuildDir(platform);
+    var exePath = config.getOutputPath(platform, ".exe");
+    
+    var possiblePaths = [
+        exePath,
+        "build/" + config.projectName + ".exe",
+        buildDir + "/" + config.projectName + ".exe",
+        config.projectName + ".exe"
+    ];
+    
+    var foundPath = "";
+    for (path in possiblePaths) {
+        if (FileSystem.exists(path)) {
+            foundPath = path;
+            break;
         }
     }
+    
+    if (foundPath == "") {
+        Console.error(Lang.get("exe_not_found"));
+        Console.info("Try running: beap build windows first");
+        return;
+    }
+    
+    Console.success(Lang.get("running", [config.projectName]));
+    
+    var absExePath = StringTools.replace(Sys.getCwd() + "/" + foundPath, "/", "\\");
+    var exeDir = Path.directory(absExePath);
+    
+    var batchContent = 
+        '@echo off\n' +
+        'cd /d "' + exeDir + '"\n' +
+        'set "PATH=%CD%\\lib;%PATH%"\n' +
+        'set "HASHLINK_PATH=%CD%\\lib"\n' +
+        'start "" "%CD%\\' + Path.withoutDirectory(absExePath) + '"\n';
+    
+    if (showOutput) {
+        var title = "Test - " + config.projectName;
+        batchContent = 
+            '@echo off\n' +
+            'title ' + title + '\n' +
+            'cd /d "' + exeDir + '"\n' +
+            'set "PATH=%CD%\\lib;%PATH%"\n' +
+            'set "HASHLINK_PATH=%CD%\\lib"\n' +
+            'echo Trace output for: ' + config.projectName + '\n' +
+            'echo Close this window to stop the game.\n' +
+            'echo ========================================\n' +
+            '"%CD%\\' + Path.withoutDirectory(absExePath) + '"\n' +
+            'echo.\n' +
+            'echo Game has exited. Closing in 3 seconds...\n' +
+            'ping -n 3 127.0.0.1 > nul\n';
+    }
+    
+    var batchFile = Sys.getCwd() + "\\__run_temp.bat";
+    File.saveContent(batchFile, batchContent);
+    
+    // 使用 cmd /c 执行 bat 文件
+    Sys.command('cmd /c "' + batchFile + '"');
+    
+    // 清理临时文件
+    try {
+        if (FileSystem.exists(batchFile)) {
+            FileSystem.deleteFile(batchFile);
+        }
+    } catch (e:Dynamic) {}
+}
     
     /**
      * Kill a running process by name
@@ -166,6 +191,111 @@ class WindowsPlatformSDL implements Platform {
             }
         } catch (e:Dynamic) {
             // Process might not exist, that's fine
+        }
+    }
+    
+    // ==================== Dependency Management ====================
+    
+    /**
+     * Copy all dependencies (.hdll and .dll) to lib/ subdirectory.
+     * 
+     * HashLink's resolve_library() has been modified to look in lib/ first for .hdll files.
+     * HashLink's main() calls SetDllDirectory("lib") so Windows also finds .dll files there.
+     * 
+     * This keeps the build directory clean with only the .exe at the root.
+     */
+    function copyDependencies(config:Config, platform:String):Void {
+        var buildDir = config.getBuildDir(platform);
+        var libDir = buildDir + "/lib";
+        var beapToolsDir = getBeapToolsDir();
+        
+        if (beapToolsDir == "") {
+            Console.warning("Cannot find beap tools directory, skipping dependency copy");
+            return;
+        }
+        
+        var sdlDir = projectConfig.sdlVersion;
+        var srcDir = beapToolsDir + "/" + sdlDir;
+        
+        Console.info("Copying dependencies to: " + libDir);
+        
+        // Copy .hdll files (HashLink dynamic libraries) to lib/
+        copyFilesByExtension(srcDir, libDir, ".hdll");
+        
+        // Copy .dll files (system DLLs like SDL3.dll, libhl.dll) to lib/
+        copyFilesByExtension(srcDir, libDir, ".dll");
+        
+        Console.success("All dependencies copied to: " + libDir);
+    }
+    
+    // ==================== Run Script Management ====================
+    
+    /**
+     * Copy the run.bat template from beap's templates/windows/ to the build output directory,
+     * replacing the placeholder project name with the actual project name.
+     */
+    function copyRunBat(config:Config, platform:String):Void {
+        var beapHome = getBeapHome();
+        if (beapHome == "") {
+            Console.warning("Cannot find beap installation directory, skipping run.bat copy");
+            return;
+        }
+        
+        var templatePath = beapHome + "/templates/windows/run.bat";
+        if (!FileSystem.exists(templatePath)) {
+            Console.warning("run.bat template not found: " + templatePath);
+            return;
+        }
+        
+        var buildDir = config.getBuildDir(platform);
+        var destPath = buildDir + "/run.bat";
+        
+        try {
+            var content = File.getContent(templatePath);
+            // Replace "Main.exe" with the actual project name
+            content = StringTools.replace(content, "Main.exe", config.projectName + ".exe");
+            File.saveContent(destPath, content);
+            Console.info("Copied run.bat to: " + destPath);
+        } catch (e:Dynamic) {
+            Console.warning("Failed to copy run.bat: " + e);
+        }
+    }
+    
+    /**
+     * Copy all files with a specific extension from source to destination
+     */
+    function copyFilesByExtension(srcDir:String, dstDir:String, ext:String):Void {
+        if (!FileSystem.exists(srcDir)) {
+            Console.warning("Source directory not found: " + srcDir);
+            return;
+        }
+        
+        if (!FileSystem.exists(dstDir)) {
+            FileSystem.createDirectory(dstDir);
+        }
+        
+        var count = 0;
+        try {
+            var entries = FileSystem.readDirectory(srcDir);
+            for (entry in entries) {
+                if (StringTools.endsWith(entry, ext)) {
+                    var srcPath = srcDir + "/" + entry;
+                    var dstPath = dstDir + "/" + entry;
+                    if (!FileSystem.isDirectory(srcPath)) {
+                        try {
+                            var content = File.getBytes(srcPath);
+                            File.saveBytes(dstPath, content);
+                            count++;
+                        } catch (e:Dynamic) {
+                            Console.warning("Failed to copy: " + entry + " (" + e + ")");
+                        }
+                    }
+                }
+            }
+        } catch (e:Dynamic) {}
+        
+        if (count > 0) {
+            Console.info("Copied " + count + " " + ext + " files to: " + dstDir);
         }
     }
     
@@ -377,18 +507,15 @@ class WindowsPlatformSDL implements Platform {
         var sdlDir = projectConfig.sdlVersion;
         var libArgs = "";
         
+        Console.info("Using individual HashLink libraries");
+        
         // Required libraries
         var libFiles = ["libhl.lib", "fmt.lib", "uv.lib", "ui.lib"];
         
         // SDL library - sdl.lib is the HashLink SDL interface library
-        // For SDL2: sdl.lib links against SDL2.dll
-        // For SDL3: sdl.lib links against SDL3.dll (compiled from HashLink-Beap-SDL2 source)
         libFiles.push("sdl.lib");
         
-        // For SDL3, also link SDL3.lib (the actual SDL3 library)
-        if (sdlDir == "sdl3") {
-            libFiles.push("SDL3.lib");
-        }
+        // SDL3 is loaded dynamically via SDL3.dll at runtime, no import lib needed
         
         for (lib in libFiles) {
             var found = false;
@@ -469,10 +596,11 @@ class WindowsPlatformSDL implements Platform {
     
     function moveOutputFiles(config:Config, platform:String):Bool {
         var buildDir = config.getBuildDir(platform);
+        var libDir = buildDir + '/lib';
         var exeName = config.projectName + '.exe';
         var objName = config.projectName + '.obj';
         var buildExe = buildDir + '/' + exeName;
-        var buildObj = buildDir + '/' + objName;
+        var buildObj = libDir + '/' + objName;
         
         var moved = false;
         
@@ -486,13 +614,18 @@ class WindowsPlatformSDL implements Platform {
             moved = true;
         }
         
+        // Move .obj, .pdb, .ilk files to lib/ subdirectory to keep build dir clean
+        if (!FileSystem.exists(libDir)) {
+            FileSystem.createDirectory(libDir);
+        }
+        
         if (FileSystem.exists(objName)) {
             if (FileSystem.exists(buildObj)) FileSystem.deleteFile(buildObj);
             FileSystem.rename(objName, buildObj);
         }
         
         var pdbName = config.projectName + '.pdb';
-        var buildPdb = buildDir + '/' + pdbName;
+        var buildPdb = libDir + '/' + pdbName;
         if (FileSystem.exists(pdbName)) {
             if (FileSystem.exists(buildPdb)) FileSystem.deleteFile(buildPdb);
             FileSystem.rename(pdbName, buildPdb);
@@ -501,7 +634,7 @@ class WindowsPlatformSDL implements Platform {
         var files = FileSystem.readDirectory(".");
         for (file in files) {
             if (StringTools.endsWith(file, ".ilk")) {
-                var targetFile = buildDir + '/' + file;
+                var targetFile = libDir + '/' + file;
                 if (FileSystem.exists(targetFile)) FileSystem.deleteFile(targetFile);
                 FileSystem.rename(file, targetFile);
             }

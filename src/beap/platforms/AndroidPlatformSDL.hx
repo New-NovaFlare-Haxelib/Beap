@@ -3,6 +3,7 @@ package beap.platforms;
 import beap.Config;
 import beap.Console;
 import beap.Lang;
+import beap.UserConfig;
 import beap.project.ProjectConfig;
 import sys.io.File;
 import sys.FileSystem;
@@ -16,9 +17,11 @@ import sys.io.Process;
 class AndroidPlatformSDL implements Platform {
     
     var projectConfig:ProjectConfig;
+    var userConfig:UserConfig;
     
     public function new(config:ProjectConfig) {
         this.projectConfig = config;
+        this.userConfig = UserConfig.load();
     }
     
     public function getName():String return "android";
@@ -84,6 +87,8 @@ class AndroidPlatformSDL implements Platform {
         var installProc = new Process(adbPath, ["install", "-r", apkPath]);
         var exitCode = installProc.exitCode();
         installProc.close();
+
+        trace("ADB install exit code: " + exitCode);
         
         if (exitCode != 0) {
             Console.error("Installation failed!");
@@ -164,7 +169,7 @@ class AndroidPlatformSDL implements Platform {
         copyDirectory(templateDir, androidDir);
         Console.info("Template copied: " + templateDir);
 
-        // Copy Haxe C output into app/jni/src/
+        // Copy Haxe C output into app/jni/src/ (CMakeLists.txt references ../../../jni from app/src/main/cpp/)
         copyHaxeCOutput(config, androidDir);
 
         // Patch app/build.gradle with project values
@@ -173,13 +178,16 @@ class AndroidPlatformSDL implements Platform {
         // Update HashLinkActivity getLibraries() with project name
         patchHashLinkActivity(config, androidDir);
 
-        // Fix jni/CMakeLists.txt to only build src (remove SDL ref if not present)
-        patchJniCMakeLists(androidDir);
+        // Fix CMakeLists.txt paths to point to the correct jni directory
+        patchCppCMakeLists(config, androidDir);
     }
 
     function copyHaxeCOutput(config:Config, androidDir:String):Void {
         var platform = getName();
         var outDir = config.getOutDir(platform);
+        
+        // The template's CMakeLists.txt uses ../../../jni from app/src/main/cpp/
+        // which resolves to app/jni/. So we copy to app/jni/src/
         var srcDir = androidDir + "/app/jni/src";
 
         if (!FileSystem.exists(srcDir)) {
@@ -248,22 +256,53 @@ class AndroidPlatformSDL implements Platform {
         if (!FileSystem.exists(activityPath)) return;
 
         var content = File.getContent(activityPath);
+        
+        // Update package name to match project config
+        var packageName = getPackageName(config);
+        
+        // Update import to use correct SDLActivity package
+        var sdl = projectConfig.sdlVersion;
+        content = StringTools.replace(content, "import org.libsdl.app.SDLActivity;", "import org.libsdl.app.SDLActivity;");
+        
+        // Update SDL library name based on SDL version
+        if (sdl == "sdl3") {
+            content = StringTools.replace(content, '"SDL2"', '"SDL3"');
+        } else {
+            content = StringTools.replace(content, '"SDL3"', '"SDL2"');
+        }
+        
+        // Ensure NexusForge is in the libraries list
+        if (content.indexOf("NexusForge") == -1) {
+            // Add NexusForge after the SDL library entry
+            var sdlLibName = sdl == "sdl3" ? "SDL3" : "SDL2";
+            content = StringTools.replace(content, '"${sdlLibName}"', '"${sdlLibName}",\n            "NexusForge"');
+        }
+        
+        // Update the main function name if needed
+        var mainClass = projectConfig.mainClass;
+        content = StringTools.replace(content, 'return "main";', 'return "${mainClass}";');
 
         File.saveContent(activityPath, content);
-        Console.info("Patched HashLinkActivity.java");
+        Console.info("Patched HashLinkActivity.java with project config");
     }
 
-    function patchJniCMakeLists(androidDir:String):Void {
-        var cmakePath = androidDir + "/app/jni/CMakeLists.txt";
+    function patchCppCMakeLists(config:Config, androidDir:String):Void {
+        // The template uses app/src/main/cpp/CMakeLists.txt (not app/jni/CMakeLists.txt)
+        var cmakePath = androidDir + "/app/src/main/cpp/CMakeLists.txt";
         if (!FileSystem.exists(cmakePath)) return;
 
         var content = File.getContent(cmakePath);
-        // Remove add_subdirectory(SDL) if SDL source directory doesn't exist
-        if (!FileSystem.exists(androidDir + "/app/jni/SDL")) {
-            var sdlLine = ~/add_subdirectory\(SDL\)\s*\n?/;
-            content = sdlLine.replace(content, "");
+        
+        // Update JNI_DIR to point to the correct location
+        // The template has: set(JNI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../jni)
+        // This resolves to app/jni/ from app/src/main/cpp/
+        // Make sure it points to where we copied the Haxe C output
+        var jniDir = androidDir + "/app/jni";
+        if (!FileSystem.exists(jniDir)) {
+            FileSystem.createDirectory(jniDir);
         }
-        File.saveContent(cmakePath, content);
+        
+        Console.info("CMakeLists.txt will use JNI from: app/jni/");
     }
 
     function deleteDirectory(path:String):Void {
@@ -358,11 +397,19 @@ class AndroidPlatformSDL implements Platform {
     }
     
     function createLocalProperties(androidDir:String):Bool {
-        var sdkPath = projectConfig.androidSdkPath != "" ? projectConfig.androidSdkPath : getAndroidSdk();
+        // Priority: UserConfig > project.xml > auto-detect
+        var sdkPath = "";
+        if (userConfig.androidSdkPath != "" && FileSystem.exists(userConfig.androidSdkPath)) {
+            sdkPath = userConfig.androidSdkPath;
+        } else if (projectConfig.androidSdkPath != "" && FileSystem.exists(projectConfig.androidSdkPath)) {
+            sdkPath = projectConfig.androidSdkPath;
+        } else {
+            sdkPath = getAndroidSdk();
+        }
 
         if (sdkPath == null || sdkPath == "") {
             Console.error("Android SDK not found!");
-            Console.info("Please set android sdk in project.xml or run: beap setup android");
+            Console.info("Please run: beap setup android");
             return false;
         }
 
@@ -394,21 +441,26 @@ class AndroidPlatformSDL implements Platform {
     }
     
     function getAndroidSdk():String {
-        // 1. Check project.xml config
+        // 1. Check user config first (stored in home directory, not in project.xml)
+        if (userConfig.androidSdkPath != "" && FileSystem.exists(userConfig.androidSdkPath))
+            return userConfig.androidSdkPath;
+
+        // 2. Check project.xml config (optional override)
         if (projectConfig.androidSdkPath != "" && FileSystem.exists(projectConfig.androidSdkPath))
             return projectConfig.androidSdkPath;
 
-        // 2. Check environment variables
+        // 3. Check environment variables
         var androidHome = Sys.getEnv("ANDROID_HOME");
         if (androidHome == null) androidHome = Sys.getEnv("ANDROID_SDK_ROOT");
         if (androidHome != null && FileSystem.exists(androidHome)) return androidHome;
 
-        // 3. Check common paths
+        // 4. Check common paths
         var commonPaths = [
             "C:/Users/" + Sys.getEnv("USERNAME") + "/AppData/Local/Android/Sdk",
             "C:/Program Files (x86)/Android/android-sdk",
             "C:/Android/Sdk",
             "D:/Android/Sdk",
+            "D:/app/android",
             Sys.getEnv("LOCALAPPDATA") + "/Android/Sdk"
         ];
 
@@ -420,16 +472,20 @@ class AndroidPlatformSDL implements Platform {
     }
     
     function getAndroidNdk():String {
-        // 1. Check project.xml config
+        // 1. Check user config first (stored in home directory)
+        if (userConfig.androidNdkPath != "" && FileSystem.exists(userConfig.androidNdkPath))
+            return userConfig.androidNdkPath;
+
+        // 2. Check project.xml config (optional override)
         if (projectConfig.androidNdkPath != "" && FileSystem.exists(projectConfig.androidNdkPath))
             return projectConfig.androidNdkPath;
 
-        // 2. Check environment variables
+        // 3. Check environment variables
         var ndkHome = Sys.getEnv("ANDROID_NDK_HOME");
         if (ndkHome == null) ndkHome = Sys.getEnv("NDK_HOME");
         if (ndkHome != null && FileSystem.exists(ndkHome)) return ndkHome;
 
-        // 3. Search under SDK directory (prefer version from project.xml)
+        // 4. Search under SDK directory (prefer version from project.xml)
         var sdk = getAndroidSdk();
         if (sdk != null) {
             var ndkPath = sdk + "/ndk";
@@ -458,6 +514,17 @@ class AndroidPlatformSDL implements Platform {
             #end
             if (FileSystem.exists(adb)) return adb;
         }
+        
+        // Also check common alternative locations
+        var altPaths = [
+            "D:/app/android/platform-tools/adb.exe",
+            "C:/Users/" + Sys.getEnv("USERNAME") + "/AppData/Local/Android/Sdk/platform-tools/adb.exe",
+            "C:/Program Files (x86)/Android/android-sdk/platform-tools/adb.exe"
+        ];
+        for (alt in altPaths) {
+            if (FileSystem.exists(alt)) return alt;
+        }
+        
         return "adb";
     }
     

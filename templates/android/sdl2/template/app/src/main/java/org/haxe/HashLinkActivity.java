@@ -19,7 +19,7 @@ public class HashLinkActivity extends SDLActivity {
     @Override
     protected String[] getLibraries() {
         return new String[]{
-            "SDL3",
+            "SDL2",
             "NexusForge"
         };
     }

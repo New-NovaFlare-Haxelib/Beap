@@ -6,10 +6,12 @@ import sys.io.Process;
 import beap.Console;
 import beap.Lang;
 import beap.Config;
+import beap.UserConfig;
 import beap.project.ProjectConfig;
 import beap.platforms.Platform;
 import beap.platforms.AndroidPlatformSDL;
 import beap.platforms.WindowsPlatformSDL;
+import beap.platforms.HashLinkPlatform;
 import beap.utils.Downloader;
 import beap.utils.PlatformUtils;
 
@@ -100,6 +102,10 @@ class Main {
         
         var windows = new WindowsPlatformSDL(projectConfig);
         platforms.set(windows.getName(), windows);
+        
+        // Register HashLink VM platform (for quick testing without C compilation)
+        var hl = new HashLinkPlatform(projectConfig);
+        platforms.set(hl.getName(), hl);
         
         var platformNames = [];
         for (key in platforms.keys()) {
@@ -559,18 +565,18 @@ class Main {
         Console.println("Android SDK/NDK Setup", ConsoleColor.BOLD);
         Console.println("");
 
-        // Show current configuration
-        var currentSdk = projectConfig.androidSdkPath;
-        var currentNdk = projectConfig.androidNdkPath;
+        // Load user config
+        var userConfig = UserConfig.load();
 
+        // Show current configuration (from user config, not project.xml)
         Console.println("Current configuration:", ConsoleColor.YELLOW);
-        if (currentSdk != "" && FileSystem.exists(currentSdk)) {
-            Console.println("  Android SDK: " + currentSdk, ConsoleColor.GREEN);
+        if (userConfig.androidSdkPath != "" && FileSystem.exists(userConfig.androidSdkPath)) {
+            Console.println("  Android SDK: " + userConfig.androidSdkPath, ConsoleColor.GREEN);
         } else {
             Console.println("  Android SDK: [not set]", ConsoleColor.RED);
         }
-        if (currentNdk != "" && FileSystem.exists(currentNdk)) {
-            Console.println("  Android NDK: " + currentNdk, ConsoleColor.GREEN);
+        if (userConfig.androidNdkPath != "" && FileSystem.exists(userConfig.androidNdkPath)) {
+            Console.println("  Android NDK: " + userConfig.androidNdkPath, ConsoleColor.GREEN);
         } else {
             Console.println("  Android NDK: [not set]", ConsoleColor.RED);
         }
@@ -584,7 +590,7 @@ class Main {
         if (sdkInput != null && StringTools.trim(sdkInput) != "") {
             sdkInput = StringTools.trim(sdkInput);
             if (FileSystem.exists(sdkInput)) {
-                projectConfig.androidSdkPath = sdkInput;
+                userConfig.androidSdkPath = sdkInput;
                 Console.success("Android SDK set to: " + sdkInput);
                 changed = true;
             } else {
@@ -600,7 +606,7 @@ class Main {
         if (ndkInput != null && StringTools.trim(ndkInput) != "") {
             ndkInput = StringTools.trim(ndkInput);
             if (FileSystem.exists(ndkInput)) {
-                projectConfig.androidNdkPath = ndkInput;
+                userConfig.androidNdkPath = ndkInput;
                 Console.success("Android NDK set to: " + ndkInput);
                 changed = true;
             } else {
@@ -610,10 +616,12 @@ class Main {
 
         Console.println("");
 
-        // Save to project.xml if anything changed
+        // Save to user config (NOT project.xml!)
         if (changed) {
-            projectConfig.save("project.xml");
-            Console.success("Android configuration saved to project.xml!");
+            userConfig.save();
+            Console.success("Android configuration saved to user config (~/.beap/config)!");
+            Console.info("SDK/NDK paths are now stored in your home directory, not in project.xml.");
+            Console.info("This means they won't be committed to version control.");
         } else {
             Console.info("No changes made.");
         }

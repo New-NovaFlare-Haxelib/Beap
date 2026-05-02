@@ -150,7 +150,8 @@ class Downloader {
     }
     
     /**
-     * Move files from a subdirectory (like hashlink-b8d143a-win64) to the target directory
+     * Move files from a subdirectory (like hashlink-b8d143a-win64) to the target directory.
+     * Skips include/ directories to avoid copying .h header files.
      */
     static function moveFilesFromSubdir(targetDir:String):Void {
         try {
@@ -159,6 +160,11 @@ class Downloader {
                 if (entry == "." || entry == "..") continue;
                 var fullPath = targetDir + "/" + entry;
                 if (FileSystem.isDirectory(fullPath)) {
+                    // Skip include/ directories - we don't need .h files in tools/
+                    if (entry == "include") {
+                        Console.info("Skipping include/ directory (not needed in tools)");
+                        continue;
+                    }
                     // Found a subdirectory - move its contents up
                     Console.info("Moving files from subdirectory: " + entry);
                     moveDirContentsUp(fullPath, targetDir);

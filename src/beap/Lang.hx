@@ -137,9 +137,9 @@ class Lang {
         en.set("help_config", "Configuration:");
         en.set("help_examples", "Examples:");
         en.set("cmd_init", "  init              Initialize a new project");
-        en.set("cmd_build", "  build <platform>  Build for a platform (android, windows)");
-        en.set("cmd_run", "  run <platform>    Run on a platform");
-        en.set("cmd_test", "  test <platform>   Build and run on a platform");
+        en.set("cmd_build", "  build <platform>  Build for a platform (android, windows, hl)");
+        en.set("cmd_run", "  run <platform>    Run on a platform (android, windows, hl)");
+        en.set("cmd_test", "  test <platform>   Build and run on a platform (android, windows, hl)");
         en.set("cmd_clean", "  clean             Clean build artifacts");
         en.set("cmd_setup", "  setup [target]    Setup tools (android, hashlink, sdl2, sdl3, windows, all)");
         en.set("cmd_update", "  update            Check for updates");
@@ -268,9 +268,9 @@ class Lang {
         zh.set("help_config", "配置:");
         zh.set("help_examples", "示例:");
         zh.set("cmd_init", "  init              初始化新项目");
-        zh.set("cmd_build", "  build <平台>      为指定平台构建 (android, windows)");
-        zh.set("cmd_run", "  run <平台>        在指定平台上运行");
-        zh.set("cmd_test", "  test <平台>       构建并在指定平台上运行");
+        zh.set("cmd_build", "  build <平台>      为指定平台构建 (android, windows, hl)");
+        zh.set("cmd_run", "  run <平台>        在指定平台上运行 (android, windows, hl)");
+        zh.set("cmd_test", "  test <平台>       构建并在指定平台上运行 (android, windows, hl)");
         zh.set("cmd_clean", "  clean             清理构建文件");
         zh.set("cmd_setup", "  setup [目标]      设置工具 (android, hashlink, sdl2, sdl3, windows, all)");
         zh.set("cmd_update", "  update            检查更新");
