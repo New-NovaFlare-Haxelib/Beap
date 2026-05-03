@@ -172,6 +172,9 @@ class AndroidPlatformSDL implements Platform {
         // Copy Haxe C output into app/jni/src/ (CMakeLists.txt references ../../../jni from app/src/main/cpp/)
         copyHaxeCOutput(config, androidDir);
 
+        // Copy user-defined native libraries (.so) to jniLibs for Android
+        copyUserNativeLibs(config, androidDir);
+
         // Patch app/build.gradle with project values
         patchAppBuildGradle(config, androidDir);
 
@@ -180,6 +183,77 @@ class AndroidPlatformSDL implements Platform {
 
         // Fix CMakeLists.txt paths to point to the correct jni directory
         patchCppCMakeLists(config, androidDir);
+    }
+
+    /**
+     * Copy user-defined native libraries (.so) from project.xml <library> tags
+     * to the Android project's jniLibs directory for inclusion in the APK,
+     * and also to the CMake lib directory for linking.
+     */
+    function copyUserNativeLibs(config:Config, androidDir:String):Void {
+        var currentDir = StringTools.replace(Sys.getCwd(), "\\", "/");
+        if (StringTools.endsWith(currentDir, "/")) {
+            currentDir = currentDir.substr(0, currentDir.length - 1);
+        }
+
+        for (lib in projectConfig.libraries) {
+            // Skip if not for Android platform
+            if (lib.ifCondition != "" && lib.ifCondition != "android") continue;
+            if (lib.platform != "" && lib.platform != "android" && lib.platform != "all") continue;
+
+            if (lib.path != "") {
+                var lowerPath = lib.path.toLowerCase();
+                // Only process .so files for Android
+                if (StringTools.endsWith(lowerPath, ".so")) {
+                    var srcPath = currentDir + "/" + lib.path;
+                    if (!FileSystem.exists(srcPath)) {
+                        Console.warning("Android native library not found: " + lib.path);
+                        continue;
+                    }
+
+                    // Determine ABI directory
+                    var abi = lib.abi;
+                    if (abi == "") {
+                        // Try to detect ABI from path or default to arm64-v8a
+                        if (lib.path.indexOf("arm64-v8a") != -1) abi = "arm64-v8a";
+                        else if (lib.path.indexOf("armeabi-v7a") != -1) abi = "armeabi-v7a";
+                        else if (lib.path.indexOf("x86_64") != -1) abi = "x86_64";
+                        else if (lib.path.indexOf("x86") != -1) abi = "x86";
+                        else abi = "arm64-v8a"; // Default
+                    }
+
+                    var fileName = Path.withoutDirectory(lib.path);
+
+                    // 1. Copy to jniLibs for runtime loading
+                    var jniLibsDir = androidDir + "/app/src/main/jniLibs/" + abi;
+                    if (!FileSystem.exists(jniLibsDir)) {
+                        FileSystem.createDirectory(jniLibsDir);
+                    }
+                    var jniDstPath = jniLibsDir + "/" + fileName;
+                    try {
+                        var content = File.getBytes(srcPath);
+                        File.saveBytes(jniDstPath, content);
+                        Console.info("Copied Android native library: " + lib.path + " -> jniLibs/" + abi + "/" + fileName);
+                    } catch (e:Dynamic) {
+                        Console.warning("Failed to copy Android native library to jniLibs: " + lib.path + " (" + e + ")");
+                    }
+
+                    // 2. Copy to CMake lib directory for compile-time linking
+                    var cmakeLibDir = androidDir + "/app/src/main/cpp/lib/" + abi;
+                    if (!FileSystem.exists(cmakeLibDir)) {
+                        FileSystem.createDirectory(cmakeLibDir);
+                    }
+                    var cmakeDstPath = cmakeLibDir + "/" + fileName;
+                    try {
+                        var content = File.getBytes(srcPath);
+                        File.saveBytes(cmakeDstPath, content);
+                        Console.info("Copied Android native library: " + lib.path + " -> cpp/lib/" + abi + "/" + fileName + " (for CMake linking)");
+                    } catch (e:Dynamic) {
+                        Console.warning("Failed to copy Android native library to CMake lib: " + lib.path + " (" + e + ")");
+                    }
+                }
+            }
+        }
     }
 
     function copyHaxeCOutput(config:Config, androidDir:String):Void {
@@ -271,19 +345,54 @@ class AndroidPlatformSDL implements Platform {
             content = StringTools.replace(content, '"SDL3"', '"SDL2"');
         }
         
-        // Ensure NexusForge is in the libraries list
-        if (content.indexOf("NexusForge") == -1) {
-            // Add NexusForge after the SDL library entry
-            var sdlLibName = sdl == "sdl3" ? "SDL3" : "SDL2";
-            content = StringTools.replace(content, '"${sdlLibName}"', '"${sdlLibName}",\n            "NexusForge"');
+        // Collect user-defined .so libraries from project.xml for Android
+        var extraLibs:Array<String> = [];
+        for (lib in projectConfig.libraries) {
+            if (lib.path == "") continue;
+            var lowerPath = lib.path.toLowerCase();
+            if (!StringTools.endsWith(lowerPath, ".so")) continue;
+            
+            // Check platform condition
+            if (lib.ifCondition != "" && lib.ifCondition != "android") continue;
+            if (lib.platform != "" && lib.platform != "android" && lib.platform != "all") continue;
+            
+            // Extract library name without lib prefix and .so suffix
+            var fileName = Path.withoutDirectory(lib.path);
+            var libName = fileName;
+            if (StringTools.startsWith(libName.toLowerCase(), "lib")) {
+                libName = libName.substr(3);
+            }
+            if (StringTools.endsWith(libName.toLowerCase(), ".so")) {
+                libName = libName.substr(0, libName.length - 3);
+            }
+            
+            if (libName != "" && extraLibs.indexOf(libName) == -1) {
+                extraLibs.push(libName);
+            }
         }
         
-        // Update the main function name if needed
-        var mainClass = projectConfig.mainClass;
-        content = StringTools.replace(content, 'return "main";', 'return "${mainClass}";');
+        // Build the libraries array with SDL, user libs (before NexusForge), and NexusForge
+        // IMPORTANT: SDL's getMainSharedObject() uses the LAST library in the array as the main library
+        // to look for the main() function. So NexusForge must be LAST.
+        // User libraries (like glyphme) must come BEFORE NexusForge since NexusForge depends on them.
+        var sdlLibName = sdl == "sdl3" ? "SDL3" : "SDL2";
+        var libsArray = 'new String[]{\n            "${sdlLibName}"';
+        for (extraLib in extraLibs) {
+            libsArray += ',\n            "${extraLib}"';
+        }
+        libsArray += ',\n            "NexusForge"\n        }';
+        
+        // Replace the getLibraries() method body
+        var libPattern = ~/return new String\[\]\{([^}]*)\};/;
+        if (libPattern.match(content)) {
+            content = libPattern.replace(content, 'return ' + libsArray + ';');
+        }
 
         File.saveContent(activityPath, content);
         Console.info("Patched HashLinkActivity.java with project config");
+        if (extraLibs.length > 0) {
+            Console.info("  Added native libraries to getLibraries(): " + extraLibs.join(", "));
+        }
     }
 
     function patchCppCMakeLists(config:Config, androidDir:String):Void {

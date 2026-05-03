@@ -225,6 +225,43 @@ class WindowsPlatformSDL implements Platform {
         // Copy .dll files (system DLLs like SDL3.dll, libhl.dll) to lib/
         copyFilesByExtension(srcDir, libDir, ".dll");
         
+        // Copy user-defined libraries from project.xml <library> tags
+        var currentDir = StringTools.replace(Sys.getCwd(), "\\", "/");
+        if (StringTools.endsWith(currentDir, "/")) {
+            currentDir = currentDir.substr(0, currentDir.length - 1);
+        }
+        
+        for (lib in projectConfig.libraries) {
+            // Skip if not for Windows platform
+            if (lib.ifCondition != "" && lib.ifCondition != "windows") continue;
+            if (lib.platform != "" && lib.platform != "windows" && lib.platform != "all") continue;
+            
+            // Copy .dll and .hdll files to lib/ directory
+            if (lib.path != "") {
+                var lowerPath = lib.path.toLowerCase();
+                if (StringTools.endsWith(lowerPath, ".dll") || StringTools.endsWith(lowerPath, ".hdll")) {
+                    var srcPath = currentDir + "/" + lib.path;
+                    var fileName = Path.withoutDirectory(lib.path);
+                    var dstPath = libDir + "/" + fileName;
+                    
+                    if (FileSystem.exists(srcPath)) {
+                        if (!FileSystem.exists(libDir)) {
+                            FileSystem.createDirectory(libDir);
+                        }
+                        try {
+                            var content = File.getBytes(srcPath);
+                            File.saveBytes(dstPath, content);
+                            Console.info("Copied user library: " + lib.path + " -> " + dstPath);
+                        } catch (e:Dynamic) {
+                            Console.warning("Failed to copy user library: " + lib.path + " (" + e + ")");
+                        }
+                    } else {
+                        Console.warning("User library not found: " + lib.path);
+                    }
+                }
+            }
+        }
+        
         Console.success("All dependencies copied to: " + libDir);
     }
     
@@ -502,6 +539,21 @@ class WindowsPlatformSDL implements Platform {
         var cFileDir = Path.directory(cFile);
         var includeArgs = ' /I "' + hlDirFixed + '/include" /I "' + currentDir + '/' + cFileDir + '"';
         
+        // Find and add additional C/C++ source files for native plugins (e.g. glyphme.cpp)
+        var extraSourceArgs = "";
+        var beapHome = getBeapHome();
+        if (beapHome != "") {
+            // Check for glyphme.cpp in common templates
+            var glyphmeSrc = beapHome + "/templates/common/sdl2/stb/glyphme.cpp";
+            if (FileSystem.exists(glyphmeSrc)) {
+                extraSourceArgs += ' "' + glyphmeSrc + '"';
+                Console.info("Adding native plugin source: " + glyphmeSrc);
+                // Add include path for stb headers
+                var stbDir = Path.directory(glyphmeSrc);
+                includeArgs += ' /I "' + stbDir + '"';
+            }
+        }
+        
         // Get SDL-specific libraries
         var beapToolsDir = getBeapToolsDir();
         var sdlDir = projectConfig.sdlVersion;
@@ -579,6 +631,33 @@ class WindowsPlatformSDL implements Platform {
                         Console.info("Adding extra lib: " + libName);
                     }
                 }
+            }
+        }
+        
+        // Add user-defined libraries from project.xml <library> tags
+        for (lib in projectConfig.libraries) {
+            // Skip if not for Windows platform
+            if (lib.ifCondition != "" && lib.ifCondition != "windows") continue;
+            if (lib.platform != "" && lib.platform != "windows" && lib.platform != "all") continue;
+            
+            // Only process .lib files for linking (skip .dll and .hdll - those are runtime dependencies)
+            if (lib.path != "") {
+                var lowerPath = lib.path.toLowerCase();
+                if (StringTools.endsWith(lowerPath, ".lib")) {
+                    var absPath = currentDir + "/" + lib.path;
+                    if (FileSystem.exists(absPath)) {
+                        libArgs += ' "' + absPath + '"';
+                        Console.info("Adding user library: " + lib.path);
+                    } else {
+                        Console.warning("User library not found: " + lib.path);
+                    }
+                } else {
+                    Console.info("Skipping link for runtime dependency: " + lib.path);
+                }
+            } else {
+                // System library (linked by name only, e.g. opengl32.lib)
+                libArgs += ' ' + lib.name + '.lib';
+                Console.info("Adding system library: " + lib.name + ".lib");
             }
         }
         

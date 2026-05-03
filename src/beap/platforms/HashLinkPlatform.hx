@@ -4,6 +4,7 @@ import beap.Config;
 import beap.Console;
 import beap.Lang;
 import beap.project.ProjectConfig;
+import beap.utils.Downloader;
 import sys.io.File;
 import sys.FileSystem;
 import haxe.io.Path;
@@ -14,6 +15,7 @@ import sys.io.Process;
  * 
  * Compiles Haxe to HashLink bytecode (.hl) and runs it with the HL VM.
  * This is useful for quick testing without needing to compile to C/exe.
+ * Uses the same bundled HashLink binaries as WindowsPlatformSDL.
  * 
  * Usage:
  *   beap build hl     - Compile to .hl bytecode
@@ -31,31 +33,40 @@ class HashLinkPlatform implements Platform {
     public function getName():String return "hl";
     
     public function getDescription():String {
-        return "HashLink bytecode (.hl) - quick testing without C compilation";
+        var sdl = projectConfig.sdlVersion;
+        return "HashLink bytecode (.hl) - quick testing with " + sdl;
     }
     
     public function isAvailable():Bool {
-        // Check if hl.exe is available (bundled or in PATH)
-        if (findHLExe() != "") return true;
+        // We'll use our bundled HashLink, so always available on Windows
         #if windows
-        return Sys.command("where hl > nul 2>&1") == 0;
+        return true;
         #else
         return Sys.command("which hl > /dev/null 2>&1") == 0;
         #end
     }
     
     public function build(config:Config, ?consoleMode:Bool = false):Bool {
-        Console.println("Building for HashLink VM", ConsoleColor.BOLD);
+        Console.println(Lang.get("build_hl"), ConsoleColor.BOLD);
+        Console.info("Using SDL: " + projectConfig.sdlVersion);
         
         var platform = getName();
         config.ensureDirectories(platform);
         
-        // Generate HXML and compile to .hl bytecode
+        // 1. Ensure HashLink binaries are downloaded
+        if (!ensureHashLinkBinaries(config)) {
+            return false;
+        }
+        
+        // 2. Generate HL bytecode
         if (!generateHLCode(config)) {
             return false;
         }
         
-        Console.success("HL bytecode generated: " + getHLPath(config));
+        // 3. Copy .hdll dependencies to the build directory (same level as .hl file)
+        copyDependencies(config, platform);
+        
+        Console.success(Lang.get("build_success", [getHLPath(config)]));
         return true;
     }
     
@@ -70,35 +81,81 @@ class HashLinkPlatform implements Platform {
             }
         }
         
-        // Find hl.exe
+        // Kill any existing instance of hl.exe running our bytecode
+        killHLProcess();
+        
+        // Find hl.exe (use bundled version first)
         var hlExe = findHLExe();
         if (hlExe == "") {
-            Console.error("HashLink VM (hl) not found in PATH!");
-            Console.info("Make sure HashLink is installed: https://hashlink.haxe.org/");
+            Console.error("HashLink VM (hl) not found!");
             return;
         }
         
-        Console.success("Running: " + hlExe + " " + hlPath);
+        Console.success(Lang.get("running", [config.projectName + ".hl"]));
         
-        if (showOutput) {
-            // Run with output visible in console
-            Console.info("=== HL Output ===");
-            var proc = new Process(hlExe, [hlPath]);
-            var output = proc.stdout.readAll().toString();
-            var errOutput = proc.stderr.readAll().toString();
-            proc.close();
-            
-            if (output != "") {
-                Console.println(output, ConsoleColor.CYAN);
+        // Get directories
+        var buildDir = config.getBuildDir(getName());
+        var absBuildDir = StringTools.replace(Sys.getCwd() + "/" + buildDir, "/", "\\");
+        var hlName = config.projectName + ".hl";
+        
+        // Create batch file to run with proper environment
+        var batchContent = buildRunBatch(hlExe, absBuildDir, hlName, showOutput, config);
+        var batchFile = Sys.getCwd() + "\\__run_hl_temp.bat";
+        File.saveContent(batchFile, batchContent);
+        
+        // Execute
+        Sys.command('cmd /c "' + batchFile + '"');
+        
+        // Cleanup
+        try {
+            if (FileSystem.exists(batchFile)) {
+                FileSystem.deleteFile(batchFile);
             }
-            if (errOutput != "") {
-                Console.println(errOutput, ConsoleColor.YELLOW);
-            }
-            Console.info("=== End HL Output ===");
-        } else {
-            // Run in background
-            Sys.command('start "" "' + hlExe + '" "' + hlPath + '"');
+        } catch (e:Dynamic) {}
+    }
+    
+    // ==================== HashLink Binary Management ====================
+    
+    function ensureHashLinkBinaries(config:Config):Bool {
+        var beapHome = getBeapHome();
+        if (beapHome == "") {
+            Console.error("Cannot find beap installation directory!");
+            return false;
         }
+        
+        var sdlDir = projectConfig.sdlVersion;
+        var targetDir = beapHome + "/tools/windows/" + sdlDir;
+        
+        // Check if binaries already exist
+        if (FileSystem.exists(targetDir)) {
+            if (hasHashLinkFiles(targetDir)) {
+                Console.info("HashLink binaries found: " + targetDir);
+                return true;
+            }
+        }
+        
+        // Download from GitHub
+        Console.info("Downloading HashLink binaries for Windows (" + sdlDir + ")...");
+        return Downloader.downloadHashLink(targetDir, sdlDir);
+    }
+    
+    /**
+     * Check if directory contains HashLink executables
+     */
+    function hasHashLinkFiles(dir:String):Bool {
+        try {
+            var entries = FileSystem.readDirectory(dir);
+            for (entry in entries) {
+                if (entry == "." || entry == "..") continue;
+                var fullPath = dir + "/" + entry;
+                if (FileSystem.isDirectory(fullPath)) {
+                    if (hasHashLinkFiles(fullPath)) return true;
+                } else if (entry == "hl.exe" || entry == "hl") {
+                    return true;
+                }
+            }
+        } catch (e:Dynamic) {}
+        return false;
     }
     
     // ==================== Core Build Steps ====================
@@ -107,15 +164,15 @@ class HashLinkPlatform implements Platform {
         Console.info("Generating HashLink bytecode from Haxe...");
         
         var platform = getName();
-        var outDir = config.getOutDir(platform);
+        var buildDir = config.getBuildDir(platform);
         
-        if (!FileSystem.exists(outDir)) {
-            FileSystem.createDirectory(outDir);
+        if (!FileSystem.exists(buildDir)) {
+            FileSystem.createDirectory(buildDir);
         }
         
         var hlFile = getHLPath(config);
         var hxmlContent = getBuildHxml(config, platform);
-        var hxmlPath = config.getBuildDir(platform) + "/build-hl.hxml";
+        var hxmlPath = buildDir + "/build-hl.hxml";
         File.saveContent(hxmlPath, hxmlContent);
         
         Console.info("Compiling to: " + hlFile);
@@ -128,10 +185,7 @@ class HashLinkPlatform implements Platform {
         // Check if .hl file was generated (might be in current dir)
         var rootHLFile = config.projectName + ".hl";
         if (!FileSystem.exists(hlFile) && FileSystem.exists(rootHLFile)) {
-            // Move it to the output directory
-            if (!FileSystem.exists(outDir)) {
-                FileSystem.createDirectory(outDir);
-            }
+            // Move it to the build directory
             File.copy(rootHLFile, hlFile);
             FileSystem.deleteFile(rootHLFile);
         }
@@ -154,8 +208,126 @@ class HashLinkPlatform implements Platform {
     }
     
     function getHLPath(config:Config):String {
-        return config.getOutDir(getName()) + "/" + config.projectName + ".hl";
+        return config.getBuildDir(getName()) + "/" + config.projectName + ".hl";
     }
+    
+    // ==================== Dependency Management ====================
+    
+    /**
+     * Copy all .hdll dependencies to the build directory (same level as .hl file).
+     * HashLink VM will load .hdll files from the same directory as the .hl file
+     * and from directories specified in HASHLINK_PATH.
+     */
+    function copyDependencies(config:Config, platform:String):Void {
+        var buildDir = config.getBuildDir(platform);
+        var beapToolsDir = getBeapToolsDir();
+        
+        if (beapToolsDir == "") {
+            Console.warning("Cannot find beap tools directory, skipping dependency copy");
+            return;
+        }
+        
+        var sdlDir = projectConfig.sdlVersion;
+        var srcDir = beapToolsDir + "/" + sdlDir;
+        
+        Console.info("Copying .hdll dependencies to: " + buildDir);
+        
+        // Copy .hdll files (HashLink dynamic libraries) to build/hl/
+        copyFilesByExtension(srcDir, buildDir, ".hdll");
+        
+        // Also copy any .dll dependencies that HL might need (like SDL3.dll)
+        copyFilesByExtension(srcDir, buildDir, ".dll");
+        
+        Console.success("All dependencies copied to: " + buildDir);
+    }
+    
+    /**
+     * Copy all files with a specific extension from source to destination
+     */
+    function copyFilesByExtension(srcDir:String, dstDir:String, ext:String):Void {
+        if (!FileSystem.exists(srcDir)) {
+            Console.warning("Source directory not found: " + srcDir);
+            return;
+        }
+        
+        if (!FileSystem.exists(dstDir)) {
+            FileSystem.createDirectory(dstDir);
+        }
+        
+        var count = 0;
+        try {
+            var entries = FileSystem.readDirectory(srcDir);
+            for (entry in entries) {
+                if (StringTools.endsWith(entry, ext)) {
+                    var srcPath = srcDir + "/" + entry;
+                    var dstPath = dstDir + "/" + entry;
+                    if (!FileSystem.isDirectory(srcPath)) {
+                        try {
+                            var content = File.getBytes(srcPath);
+                            File.saveBytes(dstPath, content);
+                            count++;
+                        } catch (e:Dynamic) {
+                            Console.warning("Failed to copy: " + entry + " (" + e + ")");
+                        }
+                    }
+                }
+            }
+        } catch (e:Dynamic) {}
+        
+        if (count > 0) {
+            Console.info("Copied " + count + " " + ext + " files to: " + dstDir);
+        }
+    }
+    
+    // ==================== Run Script Management ====================
+    
+    /**
+     * Build the batch file content for running HL bytecode
+     */
+    function buildRunBatch(hlExe:String, buildDir:String, hlName:String, showOutput:Bool, config:Config):String {
+        var batchContent = '@echo off\n';
+        batchContent += 'cd /d "' + buildDir + '"\n';
+        
+        // Set HASHLINK_PATH to current directory so HL can find .hdll files
+        batchContent += 'set "HASHLINK_PATH=%CD%"\n';
+        
+        // Also add to PATH for any .dll dependencies
+        batchContent += 'set "PATH=%CD%;%PATH%"\n';
+        
+        if (showOutput) {
+            var title = "HL Test - " + config.projectName;
+            batchContent += 'title ' + title + '\n';
+            batchContent += 'echo Trace output for: ' + config.projectName + '\n';
+            batchContent += 'echo Close this window to stop the game.\n';
+            batchContent += 'echo ========================================\n';
+            batchContent += '"' + StringTools.replace(hlExe, "/", "\\") + '" "' + hlName + '"\n';
+            batchContent += 'echo.\n';
+            batchContent += 'echo Game has exited. Closing in 3 seconds...\n';
+            batchContent += 'ping -n 3 127.0.0.1 > nul\n';
+        } else {
+            batchContent += 'start "" "' + StringTools.replace(hlExe, "/", "\\") + '" "' + hlName + '"\n';
+        }
+        
+        return batchContent;
+    }
+    
+    /**
+     * Kill any running hl.exe process that might be using our bytecode
+     */
+    function killHLProcess():Void {
+        try {
+            // Check if hl.exe is running
+            var result = Sys.command('taskkill /F /IM hl.exe /T > nul 2>&1');
+            if (result == 0) {
+                Console.info("Killed existing hl.exe process");
+                Sys.sleep(0.5);
+            }
+        } catch (e:Dynamic) {
+            // Process might not exist, that's fine
+        }
+    }
+    
+    // ==================== Tool Detection ====================
     
     function findHLExe():String {
         // 1. 优先使用 beap 下载的 HashLink（从 GitHub Release 下载的）
@@ -170,17 +342,18 @@ class HashLinkPlatform implements Platform {
             }
         }
         
-        // 2. Try PATH first
+        // 2. 回退：查找系统安装的 HashLink
         #if windows
         try {
             var proc = new Process("where", ["hl"]);
             var output = StringTools.trim(proc.stdout.readAll().toString());
             proc.close();
             if (output != "") {
-                // Take the first line
                 var lines = output.split("\n");
                 if (lines.length > 0) {
-                    return StringTools.trim(lines[0]);
+                    var found = StringTools.trim(lines[0]);
+                    Console.info("Found system hl.exe at: " + found);
+                    return found;
                 }
             }
         } catch (e:Dynamic) {}
@@ -193,21 +366,31 @@ class HashLinkPlatform implements Platform {
         } catch (e:Dynamic) {}
         #end
         
-        // 3. Check common installation paths
+        // 3. 检查常见路径
         var commonPaths = [
             "C:\\HaxeToolkit\\hl\\hl.exe",
             "C:\\hashlink\\hl.exe",
-            "C:\\Program Files\\HashLink\\hl.exe",
-            "/usr/local/bin/hl",
-            "/usr/bin/hl"
+            "C:\\Program Files\\HashLink\\hl.exe"
         ];
         
         for (path in commonPaths) {
             if (FileSystem.exists(path)) {
+                Console.info("Found HashLink at: " + path);
                 return path;
             }
         }
         
+        return "";
+    }
+    
+    function getBeapToolsDir():String {
+        var beapHome = getBeapHome();
+        if (beapHome != "") {
+            var toolsDir = beapHome + "/tools/windows";
+            if (FileSystem.exists(toolsDir)) {
+                return toolsDir;
+            }
+        }
         return "";
     }
     

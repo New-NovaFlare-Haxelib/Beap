@@ -4,6 +4,7 @@ project(heapsapp)
 add_definitions(-DANDROID_PLATFORM=android-24)
 
 # 路径变量
+set(FREETYPE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/freetype)
 set(HL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/hashlink)
 set(JNI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../jni)
 
@@ -91,14 +92,45 @@ add_library(uv_hdll STATIC ${uv_srcs})
 target_include_directories(uv_hdll PUBLIC libuv/include)
 target_link_libraries(uv_hdll uv)
 
+# --- freetype ---
+set(FT_DISABLE_BZIP2 ON CACHE BOOL "Disable bzip2" FORCE)
+set(FT_DISABLE_PNG ON CACHE BOOL "Disable PNG" FORCE)
+set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "Disable HarfBuzz" FORCE)
+set(FT_DISABLE_BROTLI ON CACHE BOOL "Disable Brotli" FORCE)
+set(FT_DISABLE_HVF ON CACHE BOOL "Disable HVF" FORCE)
+
+add_subdirectory(${FREETYPE_DIR} freetype_build)
+
+set(freetype_lib freetype)
+
+# --- 自动链接预编译的 native 库 ---
+file(GLOB native_libs ${CMAKE_CURRENT_SOURCE_DIR}/lib/${ANDROID_ABI}/*.so)
+foreach(lib_path ${native_libs})
+    get_filename_component(lib_name ${lib_path} NAME_WE)
+    add_library(${lib_name} SHARED IMPORTED)
+    set_target_properties(${lib_name} PROPERTIES
+        IMPORTED_LOCATION ${lib_path}
+    )
+    message(STATUS "Auto-linked native library: ${lib_name} (${lib_path})")
+endforeach()
+
+# --- 主库 NexusForge ---
 add_library(NexusForge SHARED
     ${JNI_DIR}/src/main.c
     ${CMAKE_CURRENT_SOURCE_DIR}/jni.c
     stb/glyphme.cpp
 )
-target_include_directories(NexusForge PRIVATE ${JNI_DIR}/src)
-target_include_directories(NexusForge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_include_directories(NexusForge PRIVATE stb)
+
+target_include_directories(NexusForge PRIVATE 
+    ${JNI_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    stb
+    ${FREETYPE_DIR}/include
+    ${FREETYPE_DIR}/include/freetype
+    ${CMAKE_CURRENT_BINARY_DIR}/freetype_build/include
+)
+
+# 链接库
 target_link_libraries(NexusForge
     hl
     sdl_hdll
@@ -106,6 +138,8 @@ target_link_libraries(NexusForge
     openal_hdll
     ui_hdll
     uv_hdll
+    ${freetype_lib}
+    ${native_libs}
     android
     log
 )
