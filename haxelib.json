@@ -1,13 +1,27 @@
 {
     "name": "beap",
-    "version": "2.0.0",
+    "version": "1.0.0",
     "releasenote": "SDL2/SDL3 dual support with automatic binary downloading, project.xml config like Lime",
     "description": "A command-line build tool for Heaps framework with SDL2/SDL3 dual support, similar to Lime",
     "license": "MIT",
     "tags": ["heaps", "build", "tool", "game", "cross-platform", "cli", "sdl2", "sdl3", "hashlink"],
     "classPath": "",
     "contributors": ["NovaFlare"],
-    "dependencies": {},
+    "dependencies": {
+        "heaps": "",
+        "hashlink": "",
+        "hlsdl": "https://github.com/New-NovaFlare-Haxelib/HLSDL-SDL2",
+        "heaps_sdl3": {
+            "type": "git",
+            "url": "https://github.com/New-NovaFlare-Haxelib/Heaps-SDL3",
+            "ref": "main"
+        },
+        "hlsdl3": {
+            "type": "git",
+            "url": "https://github.com/New-NovaFlare-Haxelib/HLSDL-SDL3",
+            "ref": "main"
+        }
+    },
     "bin": {
         "beap": {
             "windows": "beap.bat",
