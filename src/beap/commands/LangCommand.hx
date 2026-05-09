@@ -11,13 +11,13 @@ class LangCommand extends BaseCommand {
         
         switch (target) {
             case "en":
-                Lang.setLang("en");
+                Lang.setLanguage("en");
                 Console.success(Lang.get("lang_switched"));
             case "zh":
-                Lang.setLang("zh");
+                Lang.setLanguage("zh");
                 Console.success(Lang.get("lang_switched"));
             case "":
-                var current = Lang.getLang();
+                var current = Lang.getCurrentLang();
                 if (current == "en") {
                     Console.println("Current language: English", ConsoleColor.CYAN);
                 } else {

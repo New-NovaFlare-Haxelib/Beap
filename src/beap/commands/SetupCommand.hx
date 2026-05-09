@@ -24,7 +24,7 @@ class SetupCommand extends BaseCommand {
         } else if (PlatformUtils.isMac() || PlatformUtils.isLinux()) {
             setupUnix();
         } else {
-            Console.error("Unsupported OS: " + PlatformUtils.getSystemName());
+            Console.error("Unsupported OS: " + PlatformUtils.getOsName());
             Console.println("Please manually add beap to your PATH");
         }
     }

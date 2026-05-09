@@ -721,12 +721,14 @@ class Main {
     
     static function showHelp():Void {
         Console.println(Lang.get("help_title"), ConsoleColor.BOLD);
+        Console.println("");
+        BeapTool.main();
+        Console.println("");
         Console.println(Lang.get("help_version"));
         Console.println("");
         Console.println(Lang.get("help_usage"));
         Console.println("");
         Console.println(Lang.get("help_commands") + ":");
-        Console.println(Lang.get("cmd_init"));
         Console.println(Lang.get("cmd_build"));
         Console.println(Lang.get("cmd_run"));
         Console.println(Lang.get("cmd_test"));
@@ -745,7 +747,6 @@ class Main {
         Console.println(Lang.get("cfg_beap"));
         Console.println("");
         Console.println(Lang.get("help_examples") + ":");
-        Console.println(Lang.get("ex_init"));
         Console.println(Lang.get("ex_build_windows"));
         Console.println(Lang.get("ex_build_android"));
         Console.println(Lang.get("ex_run_windows"));

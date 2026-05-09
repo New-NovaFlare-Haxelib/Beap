@@ -2,6 +2,7 @@ package beap;
 
 import sys.FileSystem;
 import sys.io.File;
+import haxe.io.Path;
 
 /**
  * Multi-language support for Beap
@@ -14,14 +15,113 @@ class Lang {
     static var translations:Map<String, Map<String, String>> = [];
     
     public static function init() {
-        // Check environment variable
+        // Initialize translations first
+        initTranslations();
+        
+        // Check environment variable (highest priority)
         var envLang = Sys.getEnv("BEAP_LANG");
         if (envLang != null && envLang != "") {
             currentLang = envLang;
+            return;
         }
         
-        // Initialize translations
-        initTranslations();
+        // Check user config file (~/.beap/config)
+        var savedLang = loadLanguageFromConfig();
+        if (savedLang != null && savedLang != "") {
+            currentLang = savedLang;
+        }
+    }
+    
+    static function getConfigDir():String {
+        #if windows
+        var userProfile = Sys.getEnv("USERPROFILE");
+        if (userProfile != null && userProfile != "") {
+            return StringTools.replace(userProfile, "\\", "/") + "/.beap";
+        }
+        var homeDrive = Sys.getEnv("HOMEDRIVE");
+        var homePath = Sys.getEnv("HOMEPATH");
+        if (homeDrive != null && homePath != null) {
+            return StringTools.replace(homeDrive + homePath, "\\", "/") + "/.beap";
+        }
+        #else
+        var home = Sys.getEnv("HOME");
+        if (home != null && home != "") return home + "/.beap";
+        #end
+        return "";
+    }
+    
+    static function loadLanguageFromConfig():String {
+        var configDir = getConfigDir();
+        if (configDir == "") return "";
+        
+        var configFile = configDir + "/config";
+        if (!FileSystem.exists(configFile)) return "";
+        
+        try {
+            var content = File.getContent(configFile);
+            var lines = content.split("\n");
+            for (line in lines) {
+                var trimmed = StringTools.trim(line);
+                if (trimmed == "" || StringTools.startsWith(trimmed, "#")) continue;
+                
+                var eqPos = trimmed.indexOf("=");
+                if (eqPos == -1) continue;
+                
+                var key = StringTools.trim(trimmed.substr(0, eqPos));
+                var value = StringTools.trim(trimmed.substr(eqPos + 1));
+                
+                if (key == "lang") {
+                    return value;
+                }
+            }
+        } catch (e:Dynamic) {}
+        
+        return "";
+    }
+    
+    static function saveLanguageToConfig(lang:String):Void {
+        var configDir = getConfigDir();
+        if (configDir == "") return;
+        
+        if (!FileSystem.exists(configDir)) {
+            FileSystem.createDirectory(configDir);
+        }
+        
+        var configFile = configDir + "/config";
+        var lines = [];
+        var found = false;
+        
+        if (FileSystem.exists(configFile)) {
+            try {
+                var content = File.getContent(configFile);
+                var existingLines = content.split("\n");
+                for (line in existingLines) {
+                    var trimmed = StringTools.trim(line);
+                    if (trimmed == "" || StringTools.startsWith(trimmed, "#")) {
+                        lines.push(line);
+                        continue;
+                    }
+                    var eqPos = trimmed.indexOf("=");
+                    if (eqPos == -1) {
+                        lines.push(line);
+                        continue;
+                    }
+                    var key = StringTools.trim(trimmed.substr(0, eqPos));
+                    if (key == "lang") {
+                        lines.push("lang=" + lang);
+                        found = true;
+                    } else {
+                        lines.push(line);
+                    }
+                }
+            } catch (e:Dynamic) {}
+        }
+        
+        if (!found) {
+            lines.push("lang=" + lang);
+        }
+        
+        File.saveContent(configFile, lines.join("\n"));
     }
     
     static function initTranslations() {
@@ -52,7 +152,6 @@ class Lang {
         en.set("unsupported_platform", "Unsupported platform: {0}");
         en.set("src_not_found", "Source file not found: src/Main.hx");
         en.set("project_dir", "Project directory");
-        en.set("not_in_project", "Not in a project directory. Use 'beap init' to create a new project.");
         en.set("unknown_command", "Unknown command: {0}");
         en.set("android_sdk_not_found", "Android SDK not found!");
         en.set("android_ndk_not_found", "Android NDK not found!");
@@ -136,7 +235,6 @@ class Lang {
         en.set("help_options", "Options:");
         en.set("help_config", "Configuration:");
         en.set("help_examples", "Examples:");
-        en.set("cmd_init", "  init              Initialize a new project");
         en.set("cmd_build", "  build <platform>  Build for a platform (android, windows, hl)");
         en.set("cmd_run", "  run <platform>    Run on a platform (android, windows, hl)");
         en.set("cmd_test", "  test <platform>   Build and run on a platform (android, windows, hl)");
@@ -149,12 +247,13 @@ class Lang {
         en.set("opt_project", "  -project <path>   Specify project directory");
         en.set("cfg_project", "  project.xml       Main project configuration (like lime)");
         en.set("cfg_beap", "  .beap             Local project settings");
-        en.set("ex_init", "  beap init");
         en.set("ex_build_windows", "  beap build windows");
         en.set("ex_build_android", "  beap build android");
         en.set("ex_run_windows", "  beap run windows");
         en.set("ex_setup_android", "  beap setup android");
         en.set("ex_test_windows", "  beap test windows");
+        en.set("lang_switched", "Language switched to English");
+        en.set("unknown_lang", "Unknown language: {0}");
         
         // Chinese translations
         var zh = new Map<String, String>();
@@ -183,7 +282,6 @@ class Lang {
         zh.set("unsupported_platform", "不支持的平台: {0}");
         zh.set("src_not_found", "未找到源文件: src/Main.hx");
         zh.set("project_dir", "项目目录");
-        zh.set("not_in_project", "不在项目目录中。使用 'beap init' 创建新项目。");
         zh.set("unknown_command", "未知命令: {0}");
         zh.set("android_sdk_not_found", "未找到 Android SDK！");
         zh.set("android_ndk_not_found", "未找到 Android NDK！");
@@ -267,7 +365,6 @@ class Lang {
         zh.set("help_options", "选项:");
         zh.set("help_config", "配置:");
         zh.set("help_examples", "示例:");
-        zh.set("cmd_init", "  init              初始化新项目");
         zh.set("cmd_build", "  build <平台>      为指定平台构建 (android, windows, hl)");
         zh.set("cmd_run", "  run <平台>        在指定平台上运行 (android, windows, hl)");
         zh.set("cmd_test", "  test <平台>       构建并在指定平台上运行 (android, windows, hl)");
@@ -280,12 +377,13 @@ class Lang {
         zh.set("opt_project", "  -project <路径>   指定项目目录");
         zh.set("cfg_project", "  project.xml       主项目配置文件 (类似 lime)");
         zh.set("cfg_beap", "  .beap             本地项目设置");
-        zh.set("ex_init", "  beap init");
         zh.set("ex_build_windows", "  beap build windows");
         zh.set("ex_build_android", "  beap build android");
         zh.set("ex_run_windows", "  beap run windows");
         zh.set("ex_setup_android", "  beap setup android");
         zh.set("ex_test_windows", "  beap test windows");
+        zh.set("lang_switched", "语言已切换为中文");
+        zh.set("unknown_lang", "未知语言: {0}");
         
         translations.set("en", en);
         translations.set("zh", zh);
@@ -321,11 +419,12 @@ class Lang {
     }
     
     /**
-     * Set current language
+     * Set current language and persist to config
      */
     public static function setLanguage(lang:String) {
         if (translations.exists(lang)) {
             currentLang = lang;
+            saveLanguageToConfig(lang);
         }
     }
     

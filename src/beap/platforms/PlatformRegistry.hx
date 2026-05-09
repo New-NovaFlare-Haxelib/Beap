@@ -17,10 +17,4 @@ class PlatformRegistry {
     public static function getAll():Array<Platform> {
         return platforms.copy();
     }
-    
-    public static function init() {
-        register(new HashLinkPlatform());
-        register(new WindowsPlatform());
-        register(new AndroidPlatform());
-    }
 }
